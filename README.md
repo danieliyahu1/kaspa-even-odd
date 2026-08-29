@@ -80,3 +80,31 @@ running them:
 git submodule update --init
 cd oracle && cargo build --release && cd ..
 ```
+
+## Deployment
+
+The repository includes a production container and Kubernetes manifests under
+`deploy/`. The runtime process exposes Kubernetes probe endpoints only; the
+protocol implementation remains the module exported by `src/index.js`.
+
+```sh
+npm run check
+npm test
+docker build --platform linux/arm64 -t ghcr.io/<owner>/<repo>/kaspa-even-odd:sha-<git-sha> .
+kubectl apply -f deploy/namespace.yaml
+kubectl apply -f deploy/deployment.yaml
+kubectl apply -f deploy/service.yaml
+```
+
+Before applying `deploy/deployment.yaml`, replace
+`ghcr.io/OWNER/REPOSITORY/kaspa-even-odd:REPLACE_WITH_IMMUTABLE_TAG` with an
+immutable image tag, such as `ghcr.io/<owner>/<repo>/kaspa-even-odd:sha-<git-sha>`.
+
+Runtime details:
+
+- Namespace: `kaspa-even-odd`
+- Port: `3000`
+- Readiness endpoint: `/readyz`
+- Liveness endpoint: `/healthz`
+- Required runtime secrets: none
+- Required persistent storage: none

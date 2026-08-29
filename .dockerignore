@@ -1,0 +1,14 @@
+.git/
+.github/
+.opencode/
+.env
+.env.*
+node_modules/
+npm-debug.log*
+oracle/target/
+**/target/
+wallet-testnet.json
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

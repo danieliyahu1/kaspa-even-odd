@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: kaspa-even-odd
+  namespace: kaspa-even-odd
+  labels:
+    app.kubernetes.io/name: kaspa-even-odd
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: kaspa-even-odd
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http

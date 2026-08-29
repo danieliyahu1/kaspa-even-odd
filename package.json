@@ -5,8 +5,9 @@
   "type": "module",
   "description": "Non-custodial Even/Odd game protocol for Kaspa testnet-10",
   "scripts": {
+    "start": "node src/server.js",
     "test": "node --test \"test/*.test.js\"",
-    "check": "node --check src/index.js"
+    "check": "node --check src/index.js && node --check src/server.js"
   },
   "engines": {
     "node": ">=20"
