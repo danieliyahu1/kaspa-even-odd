@@ -11,3 +11,4 @@ export * from './terminal-lifecycle.js';
 export * from './reveal.js';
 export * from './join-transactions.js';
 export * from './join-game.js';
+export * from './recovery.js';

@@ -43,6 +43,9 @@ secret, commitment preimage, wallet key, or transaction template.
 - `src/terminal-lifecycle.js` provides the authoritative read, idempotent
   checkpoint, sign, submit, confirmation, and recovery lifecycle for terminal
   actions.
+- `src/recovery.js` reconstructs game state from accepted chain history with a
+  one-confirmation buffer, invalidates removed-block checkpoints, classifies
+  external transactions, and provides memory and durable JSON recovery stores.
 - `src/wasm-transaction.js` loads the pinned WASM SDK (`Transaction`,
   `GenesisCovenantGroup`, `populateGenesisCovenants`, `serializeToSafeJSON`)
   and rejects any Kastle mutation of sighash-relevant fields.
@@ -124,4 +127,5 @@ Runtime details:
 - Readiness endpoint: `/readyz`
 - Liveness endpoint: `/healthz`
 - Required runtime secrets: none
-- Required persistent storage: none
+- Required persistent storage: none for the stateless runtime; configure a
+  durable `JsonRecoveryStore` when recovery must survive process restarts.

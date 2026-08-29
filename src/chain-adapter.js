@@ -5,6 +5,7 @@ import { createWasmGenesisSafeJson, verifyWasmSignedSafeJson } from './wasm-tran
 import { blake2b256 } from './hashes/blake2b.mjs';
 import { prepareFallbackClaimTransaction, prepareIndividualRefundTransaction, prepareRevealTransaction, serializeTerminalTransaction } from './terminal-transactions.js';
 import { prepareJoinTransaction, serializeJoinTransaction, verifySignedJoinTransaction } from './join-transactions.js';
+import { reconstructGameState } from './recovery.js';
 
 const DEFAULT_PRIORITY_BUCKET = 0;
 
@@ -162,8 +163,16 @@ export class KaspaChainAdapter {
   }
 
   async readGameState({ gameId, network }) {
-    if (typeof this.rpc.getGameState !== 'function') throw new ProtocolError('CHAIN_UNAVAILABLE', 'RPC game-state reconstruction is not configured');
-    return this.rpc.getGameState({ gameId, network });
+    if (typeof this.rpc.getGameState === 'function') return this.rpc.getGameState({ gameId, network });
+    if (typeof this.rpc.getGameHistory !== 'function') throw new ProtocolError('CHAIN_UNAVAILABLE', 'RPC game-state reconstruction is not configured');
+    const history = await this.rpc.getGameHistory({ gameId, network });
+    const reduced = reconstructGameState(history);
+    if (!reduced.state) return { gameId, network, confirmationStatus: reduced.status, pendingTransactions: reduced.pendingTransactions, conflicting: false };
+    return { ...reduced.state, gameId, network, confirmationStatus: reduced.status, pendingTransactions: reduced.pendingTransactions, checkpoint: reduced.checkpoint, rebuilt: reduced.rebuilt };
+  }
+
+  async recoverGameState({ gameId, network }) {
+    return this.readGameState({ gameId, network });
   }
 
   async #readPriorityFeerate() {
