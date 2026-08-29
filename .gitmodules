@@ -1,0 +1,3 @@
+[submodule "silverscript"]
+	path = silverscript
+	url = https://github.com/kaspanet/silverscript.git

@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+
+# Local agent/tooling environment (opencode assistant config, plugins, MCP) —
+# not product source; contains machine-specific paths and internal IDs.
+.opencode/
+opencode.json
+
+# Testnet wallet (contains a testnet seed phrase) — never commit
+wallet-testnet.json
+
+# Rust build artifacts (standalone oracle at oracle/, and silverscript submodule)
+target/
+**/target/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Env / secrets
+.env
+.env.*

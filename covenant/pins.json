@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "silverscript": {
+    "sourceCommit": "db9e1bafb15f6fc58f4856f3c1b7e5b72ac457c4",
+    "compilerVersion": "0.1.0",
+    "windowsX64CompilerSha256": "6aac1b8a7ec2dd745c457cafd0c6b1bc74e29e03484975d88204915b296796f2"
+  },
+  "covenant": {
+    "source": "covenant/even_odd.sil",
+    "sourceSha256": "f5c9f315bfcd4c73c6cbf31646d75ff07b6056c2c29ac276f22ff13b386a3876",
+    "artifact": "covenant/even_odd.template.artifact.json",
+    "artifactSha256": "3cc88239b120e2b4e7094a86af647ad16560380277f01cf8e12276a817c3f316",
+    "templateHash": "9b3b49235f1797ca773b2d3702a08a6141f1ec7e555886a06bb28dafb54a0d67"
+  },
+  "rustyKaspa": {
+    "release": "v2.0.1",
+    "sourceCommit": "a41a333b08848f41bf737b72592e463a6011b8ac",
+    "wasmAsset": "kaspa-wasm32-sdk-v2.0.1.zip",
+    "wasmAssetUrl": "https://github.com/kaspanet/rusty-kaspa/releases/download/v2.0.1/kaspa-wasm32-sdk-v2.0.1.zip",
+    "wasmReleaseSha256": "7eaffac9cd920ef2fdf540c6e10f2a2b7761170ebc62ec57dfa0f71c64567a71",
+    "vendoredWasmFileSha256": "9427733cb0cb1c78cc3f2cc9f77f4153426636925ced0256c5c30e4edc199eaa",
+    "vendored": "vendor/kaspa-wasm32-sdk/v2.0.1/nodejs/kaspa",
+    "status": "pinned"
+  }
+}

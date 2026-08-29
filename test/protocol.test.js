@@ -1,0 +1,175 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { parseInvite, serializeInvite } from '../src/invite.js';
+import { MemoryGameStore, prepareCreateGame } from '../src/create-game.js';
+import { ProtocolError, stakeToSompi } from '../src/protocol.js';
+import { KaspaCreationConfirmer, submitSignedTransaction } from '../src/kaspa-adapter.js';
+import { KastleWalletAdapter, waitForKastleProvider } from '../src/kastle-wallet.js';
+import { createGenesisGameOutput } from '../src/genesis-transaction.js';
+
+const valid = {
+  network: 'testnet-10',
+  creatorAddress: 'kaspatest:creator',
+  creatorPublicKey: '07'.repeat(33),
+  creatorCommitment: '09'.repeat(32),
+  deadlineDaa: 500000000000n,
+  side: 'even',
+  stakeKas: 1,
+  feeSompi: 1000n,
+};
+
+test('converts KAS to exact sompi without floating point', () => {
+  assert.equal(stakeToSompi(1), 100_000_000n);
+  assert.throws(() => stakeToSompi(1.5), { code: 'INVALID_STAKE' });
+  assert.throws(() => stakeToSompi(101), { code: 'INVALID_STAKE' });
+});
+
+test('prepares deterministic game metadata and separates fees', () => {
+  const request = prepareCreateGame(valid);
+  assert.equal(request.stakeSompi, 100_000_000n);
+  assert.equal(request.feeSompi, 1000n);
+  assert.match(request.covenantAddress, /^kaspatest:/);
+  assert.match(request.covenantScriptPublicKey, /^aa20[0-9a-f]{64}87$/);
+});
+
+test('rejects wrong network and incomplete covenant state', () => {
+  assert.throws(() => prepareCreateGame({ ...valid, network: 'mainnet' }), { code: 'WRONG_NETWORK' });
+  assert.throws(() => prepareCreateGame({ ...valid, creatorCommitment: undefined }), { code: 'INVALID_GAME_STATE' });
+});
+
+test('serializes and parses an invite with only version and game id', () => {
+  const gameId = 'b'.repeat(64);
+  const invite = serializeInvite({ gameId, origin: 'https://example.test/create' });
+  assert.equal(invite, `https://example.test/join?v=EO%2Fv1&game=${gameId}`);
+  assert.deepEqual(parseInvite(invite, 'https://example.test'), { protocolVersion: 'EO/v1', network: 'testnet-10', gameId });
+  assert.throws(() => parseInvite(`${invite}&secret=do-not-accept`, 'https://example.test'), { code: 'INVALID_INVITE' });
+});
+
+test('confirms creation before producing an invite', async () => {
+  const events = [];
+  const transactionId = 'c'.repeat(64);
+  const request = prepareCreateGame(valid);
+  const prepared = preparedCreationFor(request);
+  const result = await (await import('../src/create-game.js')).createAndConfirmGame({
+    request,
+    wallet: { sign: async (value) => { events.push(value); return signedSafeJson(prepared.txJson); } },
+    chain: {
+      prepareCreation: async () => prepared,
+      verifySignedCreation: async ({ signedTxJson }) => ({ signedTxJson }),
+      submitCreation: async () => transactionId,
+      confirmCreation: async () => ({ status: 'confirmed' }),
+    },
+    inviteOrigin: 'https://example.test',
+    store: new MemoryGameStore(),
+  });
+  assert.equal(events.length, 1);
+  assert.equal(result.gameId, transactionId);
+  assert.match(result.inviteUrl, /\/join\?/);
+});
+
+test('uses typed protocol errors', () => {
+  assert.throws(() => prepareCreateGame({ ...valid, side: 'random' }), (error) => error instanceof ProtocolError && error.code === 'INVALID_SIDE');
+});
+
+test('submits through the Rusty Kaspa v2 object-shaped RPC boundary', async () => {
+  const transaction = { version: 1 };
+  const txid = await submitSignedTransaction({
+    rpc: { submitTransaction: async (value) => { assert.deepEqual(value, { transaction, allowOrphan: false }); return { transactionId: 'tx-2' }; } },
+    transaction,
+  });
+  assert.equal(txid, 'tx-2');
+});
+
+test('connects supported Kastle and signs exact prepared SafeJSON', async () => {
+  const listeners = new Map();
+  const provider = {
+    connect: async () => true,
+    getAccount: async () => ({ address: valid.creatorAddress, publicKey: 'public-key' }),
+    getNetwork: async () => 'testnet-10',
+    getVersion: async () => '2.59.8',
+    signTx: async (network, txJson) => { assert.equal(network, 'testnet-10'); assert.equal(txJson, 'unsigned'); return 'signed'; },
+    on: (event, handler) => listeners.set(event, handler),
+    removeListener: (event) => listeners.delete(event),
+  };
+  const wallet = new KastleWalletAdapter(provider);
+  await wallet.connect();
+  const result = await wallet.sign({ network: 'testnet-10', creatorAddress: valid.creatorAddress, txJson: 'unsigned', preparedHash: 'hash' });
+  assert.equal(result, 'signed');
+  listeners.get('networkChanged')('mainnet');
+  await assert.rejects(() => wallet.sign({ network: 'testnet-10', creatorAddress: valid.creatorAddress, txJson: 'unsigned', preparedHash: 'hash' }), { code: 'WALLET_CHANGED' });
+  wallet.dispose();
+});
+
+test('rejects outdated Kastle versions', async () => {
+  const wallet = new KastleWalletAdapter({
+    connect: async () => true,
+    getAccount: async () => ({ address: valid.creatorAddress, publicKey: 'public-key' }),
+    getNetwork: async () => 'testnet-10',
+    getVersion: async () => '2.59.7',
+  });
+  await assert.rejects(() => wallet.connect(), { code: 'WALLET_UNSUPPORTED' });
+});
+
+test('detects late Kastle injection and rejects a mainnet account prefix', async () => {
+  let reads = 0;
+  const provider = { connect: async () => true };
+  assert.equal(await waitForKastleProvider({
+    getProvider: () => (++reads === 2 ? provider : undefined),
+    wait: async () => {},
+  }), provider);
+
+  const wallet = new KastleWalletAdapter({
+    connect: async () => true,
+    getAccount: async () => ({ address: 'kaspa:mainnet', publicKey: 'public-key' }),
+    getNetwork: async () => 'testnet-10',
+    getVersion: async () => '2.59.8',
+    signTx: async () => 'signed',
+  });
+  await assert.rejects(() => wallet.connect(), { code: 'WALLET_ACCOUNT_MISMATCH' });
+});
+
+test('confirms a creation only after its covenant UTXO has one DAA confirmation', async () => {
+  let reads = 0;
+  const confirmer = new KaspaCreationConfirmer({
+    rpc: {
+      getUtxosByAddresses: async () => ({ entries: [{ outpoint: { transactionId: 'tx-1', index: 0 }, amount: '100000000', scriptPublicKey: { script: 'aa20' }, blockDaaScore: '50' }] }),
+      getBlockDagInfo: async () => ({ virtualDaaScore: String(50 + reads++) }),
+    },
+    covenantAddress: prepareCreateGame(valid).covenantAddress,
+    stakeSompi: 100_000_000n,
+    scriptPublicKey: 'aa20',
+    attempts: 3,
+    wait: async () => {},
+  });
+  assert.deepEqual(await confirmer.confirmCreation({ transactionId: 'tx-1' }), {
+    status: 'confirmed',
+    acceptingDaaScore: '50',
+    confirmedDaaScore: '51',
+  });
+});
+
+function preparedCreationFor(request) {
+  const policy = { authorizingInput: 0 };
+  const input = {
+    transactionId: '11'.repeat(32), index: 2, sequence: '0', sigOpCount: 0, computeBudget: 0, signatureScript: '',
+    utxo: { amount: String(request.stakeSompi + request.feeSompi), scriptPublicKey: '000051', blockDaaScore: '1', isCoinbase: false, covenantId: null },
+  };
+  const output = createOutput(request, input);
+  return {
+    network: request.network,
+    creatorAddress: request.creatorAddress,
+    preparedHash: 'ab'.repeat(32),
+    policy,
+    txJson: JSON.stringify({ id: '00'.repeat(32), version: 1, inputs: [input], outputs: [output], subnetworkId: '00'.repeat(20), lockTime: '0', gas: '0', storageMass: '0', payload: '' }),
+  };
+}
+
+function createOutput(request, input) {
+  return createGenesisGameOutput({ request, authorizingInput: 0, authorizingOutpoint: input });
+}
+
+function signedSafeJson(txJson) {
+  const transaction = JSON.parse(txJson);
+  transaction.inputs[0].signatureScript = '01aa';
+  return JSON.stringify(transaction);
+}
