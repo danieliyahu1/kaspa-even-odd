@@ -75,6 +75,50 @@ export function invalidateCheckpoint(checkpoint, removedBlocks = []) {
   return clone(checkpoint);
 }
 
+export function projectRecoveryState({ status, state = null, error = null, pendingTransactions = [], rebuilt = false } = {}) {
+  const safeStatus = ['loading', 'empty', 'confirmed', 'pending', 'unknown', 'rejected', 'expired', 'conflicting', 'unsupported', 'stale'].includes(status)
+    ? status : 'unknown';
+  const canAct = safeStatus === 'confirmed' && Boolean(state) && state.conflicting !== true && state.reorged !== true;
+  return Object.freeze({
+    status: safeStatus,
+    state: canAct ? clone(state) : null,
+    permittedAction: canAct ? state.permittedAction ?? null : null,
+    pendingTransactions: Object.freeze([...pendingTransactions]),
+    rebuilt: Boolean(rebuilt),
+    error: error ? { code: String(error.code ?? 'RECOVERY_FAILED'), message: String(error.message ?? 'Recovery failed') } : null,
+  });
+}
+
+export function createRecoveryLogger(logger = console) {
+  return Object.freeze({
+    transaction: (event) => logger.info?.(redactedEvent(event)),
+    error: (event) => logger.warn?.(redactedEvent(event)),
+  });
+}
+
+export function bindWalletRecovery(wallet, reload) {
+  if (!wallet || typeof wallet.subscribe !== 'function' || typeof reload !== 'function') {
+    throw new ProtocolError('RECOVERY_UNAVAILABLE', 'Wallet subscription and state reload are required');
+  }
+  return wallet.subscribe(({ reason }) => reload({ reason }));
+}
+
+export async function recoverAndCheckpoint({ chain, store, gameId, network = NETWORK, metadata = {} }) {
+  if (!chain || typeof chain.readGameState !== 'function') throw new ProtocolError('CHAIN_UNAVAILABLE', 'Authoritative game-state reader is required');
+  if (!store || typeof store.load !== 'function' || typeof store.save !== 'function') throw new ProtocolError('STORAGE_UNAVAILABLE', 'Recovery storage is required');
+  const key = recoveryOperationKey({ gameId, network });
+  const previous = await store.load(key);
+  const game = await chain.readGameState({ gameId: validateGameId(gameId), network });
+  const view = projectRecoveryState({ ...game, status: game?.confirmationStatus ?? game?.status, state: game?.state ?? game });
+  const record = {
+    key, gameId: validateGameId(gameId), network, protocolVersion: PROTOCOL_VERSION,
+    preparedHash: metadata.preparedHash, artifactMetadata: metadata.artifactMetadata,
+    checkpoint: game?.checkpoint ?? previous?.checkpoint ?? null, status: view.status,
+  };
+  await store.save(record);
+  return view;
+}
+
 export class MemoryRecoveryStore {
   constructor(records = []) { this.records = new Map(records.map((record) => [record.key, sanitizeRecord(record)])); }
   async load(key) { return clone(this.records.get(key) ?? null); }
@@ -131,6 +175,18 @@ function stripSecrets(value, fieldName = '') {
     .filter(([key]) => !SECRET_FIELDS.test(key))
     .map(([key, item]) => [key, stripSecrets(item, key)])
     .filter(([, item]) => item !== undefined));
+}
+
+function redactedEvent(event) {
+  const safe = sanitizeRecord(event ?? {});
+  return {
+    transactionId: safe.transactionId,
+    action: safe.action,
+    protocolVersion: safe.protocolVersion ?? PROTOCOL_VERSION,
+    templateHash: safe.templateHash,
+    phase: safe.phase,
+    confirmationStatus: safe.confirmationStatus ?? safe.status,
+  };
 }
 
 function number(value) { const result = Number(value); return Number.isFinite(result) ? result : 0; }

@@ -5,12 +5,12 @@ import { createWasmGenesisSafeJson, verifyWasmSignedSafeJson } from './wasm-tran
 import { blake2b256 } from './hashes/blake2b.mjs';
 import { prepareFallbackClaimTransaction, prepareIndividualRefundTransaction, prepareRevealTransaction, serializeTerminalTransaction } from './terminal-transactions.js';
 import { prepareJoinTransaction, serializeJoinTransaction, verifySignedJoinTransaction } from './join-transactions.js';
-import { reconstructGameState } from './recovery.js';
+import { reconstructGameState, recoveryOperationKey } from './recovery.js';
 
 const DEFAULT_PRIORITY_BUCKET = 0;
 
 export class KaspaChainAdapter {
-  constructor({ rpc, covenantAddress, scriptPublicKey, outputIndex = 0, feeOptions, confidenceAttempts = 30, confidenceIntervalMs = 2_000, priorityBucket = DEFAULT_PRIORITY_BUCKET }) {
+  constructor({ rpc, covenantAddress, scriptPublicKey, outputIndex = 0, feeOptions, confidenceAttempts = 30, confidenceIntervalMs = 2_000, priorityBucket = DEFAULT_PRIORITY_BUCKET, recoveryStore }) {
     if (!rpc) throw new ProtocolError('RPC_UNAVAILABLE', 'Kaspa RPC client is required');
     this.rpc = rpc;
     this.covenantAddress = covenantAddress;
@@ -20,6 +20,7 @@ export class KaspaChainAdapter {
     this.priorityBucket = priorityBucket;
     this.confidenceAttempts = confidenceAttempts;
     this.confidenceIntervalMs = confidenceIntervalMs;
+    this.recoveryStore = recoveryStore;
   }
 
   async prepareCreation(request) {
@@ -167,8 +168,11 @@ export class KaspaChainAdapter {
     if (typeof this.rpc.getGameHistory !== 'function') throw new ProtocolError('CHAIN_UNAVAILABLE', 'RPC game-state reconstruction is not configured');
     const history = await this.rpc.getGameHistory({ gameId, network });
     const reduced = reconstructGameState(history);
-    if (!reduced.state) return { gameId, network, confirmationStatus: reduced.status, pendingTransactions: reduced.pendingTransactions, conflicting: false };
-    return { ...reduced.state, gameId, network, confirmationStatus: reduced.status, pendingTransactions: reduced.pendingTransactions, checkpoint: reduced.checkpoint, rebuilt: reduced.rebuilt };
+    const result = reduced.state
+      ? { ...reduced.state, gameId, network, confirmationStatus: reduced.status, pendingTransactions: reduced.pendingTransactions, checkpoint: reduced.checkpoint, rebuilt: reduced.rebuilt }
+      : { gameId, network, confirmationStatus: reduced.status, pendingTransactions: reduced.pendingTransactions, conflicting: false, checkpoint: reduced.checkpoint, rebuilt: reduced.rebuilt };
+    if (this.recoveryStore?.save) await this.recoveryStore.save({ key: recoveryOperationKey({ gameId, network }), gameId, network, checkpoint: reduced.checkpoint, status: reduced.status });
+    return result;
   }
 
   async recoverGameState({ gameId, network }) {

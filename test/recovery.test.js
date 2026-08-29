@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { classifyTransaction, JsonRecoveryStore, MemoryRecoveryStore, reconstructGameState, reduceGameHistory, sanitizeRecord } from '../src/recovery.js';
+import { bindWalletRecovery, classifyTransaction, createRecoveryLogger, JsonRecoveryStore, MemoryRecoveryStore, projectRecoveryState, reconstructGameState, reduceGameHistory, recoverAndCheckpoint, sanitizeRecord } from '../src/recovery.js';
 import { KastleWalletAdapter } from '../src/kastle-wallet.js';
 
 test('classifies only authoritative one-confirmed transactions as confirmed', () => {
@@ -75,4 +75,30 @@ test('wallet changes notify the application so permissions can be cleared', asyn
   listeners.get('accountsChanged')(['kaspatest:other']);
   assert.deepEqual(changes, [{ reason: 'account', account: null, network: null }]);
   await assert.rejects(() => wallet.sign({ network: 'testnet-10', creatorAddress: 'kaspatest:player', txJson: '{}', preparedHash: 'aa' }), { code: 'WALLET_CHANGED' });
+});
+
+test('recovery projection fails closed and logs only safe fields', () => {
+  assert.equal(projectRecoveryState({ status: 'loading' }).status, 'loading');
+  assert.equal(projectRecoveryState({ status: 'empty' }).status, 'empty');
+  const blocked = projectRecoveryState({ status: 'unknown', state: { permittedAction: 'settle' } });
+  assert.equal(blocked.permittedAction, null);
+  const entries = [];
+  createRecoveryLogger({ info: (entry) => entries.push(entry), warn: () => {} }).transaction({
+    transactionId: 'aa'.repeat(32), action: 'reveal', phase: 'joined', status: 'confirmed', nonceHex: 'bb'.repeat(32), commitment: 'cc'.repeat(32),
+  });
+  assert.deepEqual(entries[0], { transactionId: 'aa'.repeat(32), action: 'reveal', protocolVersion: 'EO/v1', templateHash: undefined, phase: 'joined', confirmationStatus: 'confirmed' });
+  assert.doesNotMatch(JSON.stringify(entries), /bb|cc/);
+});
+
+test('recovery checkpoints authoritative state and reloads after a wallet change', async () => {
+  const store = new MemoryRecoveryStore();
+  const chain = { readGameState: async () => ({ confirmationStatus: 'confirmed', status: 'open', checkpoint: { daaScore: '7' } }) };
+  const view = await recoverAndCheckpoint({ chain, store, gameId: 'aa'.repeat(32) });
+  assert.equal(view.status, 'confirmed');
+  assert.equal((await store.load('EO/v1\u0000recovery\u0000testnet-10\u0000' + 'aa'.repeat(32))).checkpoint.daaScore, '7');
+  const events = [];
+  const unsubscribe = bindWalletRecovery({ subscribe: (listener) => { events.push(listener); return () => {}; } }, (event) => events.push(event));
+  events[0]({ reason: 'network' });
+  assert.equal(events[1].reason, 'network');
+  unsubscribe();
 });
