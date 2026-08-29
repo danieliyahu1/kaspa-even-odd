@@ -115,10 +115,9 @@ kubectl apply -f deploy/namespace.yaml
 kubectl apply -f deploy/service.yaml
 ```
 
-The GitHub Actions workflow publishes
-`ghcr.io/danieliyahu1/kaspa-even-odd:sha-<git-sha>` and applies that immutable
-image to the Deployment. Deploy the Deployment through the workflow so the
-SHA tag is selected before it is applied.
+The manifest is pinned to the immutable image published for the current
+release. When a new image is published, update the image line in
+`deploy/deployment.yaml` to the new full Git SHA before syncing Argo CD.
 
 Runtime details:
 
