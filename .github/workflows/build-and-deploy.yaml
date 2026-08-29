@@ -3,7 +3,7 @@ name: Build and Deploy
 on:
   push:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 permissions:
@@ -76,6 +76,6 @@ jobs:
       - name: Deploy immutable image
         run: |
           kubectl apply -f deploy/namespace.yaml
-          sed "s|ghcr.io/OWNER/REPOSITORY/kaspa-even-odd:REPLACE_WITH_IMMUTABLE_TAG|${{ needs.test-build-publish.outputs.image }}|" deploy/deployment.yaml | kubectl apply -f -
+          sed "s|image: ghcr.io/danieliyahu1/kaspa-even-odd$|image: ${{ needs.test-build-publish.outputs.image }}|" deploy/deployment.yaml | kubectl apply -f -
           kubectl apply -f deploy/service.yaml
           kubectl rollout status deployment/kaspa-even-odd -n kaspa-even-odd --timeout=180s

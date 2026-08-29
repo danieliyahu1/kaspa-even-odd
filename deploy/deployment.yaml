@@ -22,7 +22,9 @@ spec:
         fsGroup: 1000
       containers:
         - name: kaspa-even-odd
-          image: ghcr.io/OWNER/REPOSITORY/kaspa-even-odd:REPLACE_WITH_IMMUTABLE_TAG
+          # The release workflow replaces this repository-qualified image with
+          # the immutable SHA tag produced by the same workflow run.
+          image: ghcr.io/danieliyahu1/kaspa-even-odd
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

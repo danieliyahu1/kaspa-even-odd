@@ -112,13 +112,13 @@ npm run check
 npm test
 docker build --platform linux/arm64 -t ghcr.io/<owner>/<repo>/kaspa-even-odd:sha-<git-sha> .
 kubectl apply -f deploy/namespace.yaml
-kubectl apply -f deploy/deployment.yaml
 kubectl apply -f deploy/service.yaml
 ```
 
-Before applying `deploy/deployment.yaml`, replace
-`ghcr.io/OWNER/REPOSITORY/kaspa-even-odd:REPLACE_WITH_IMMUTABLE_TAG` with an
-immutable image tag, such as `ghcr.io/<owner>/<repo>/kaspa-even-odd:sha-<git-sha>`.
+The GitHub Actions workflow publishes
+`ghcr.io/danieliyahu1/kaspa-even-odd:sha-<git-sha>` and applies that immutable
+image to the Deployment. Deploy the Deployment through the workflow so the
+SHA tag is selected before it is applied.
 
 Runtime details:
 
