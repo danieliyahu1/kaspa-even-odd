@@ -35,10 +35,14 @@ function loadTemplate() {
     templateHash,
     stateSpan,
     bytecodeHex: Buffer.from(compiled.bytecode).toString('hex'),
-    dispatchTags: Object.freeze({
-      refund: contract.entries.refund.dispatch_tag,
-      join: contract.entries.join.dispatch_tag,
-    }),
+     dispatchTags: Object.freeze({
+        refund: contract.entries.refund.dispatch_tag,
+        refund_player: contract.entries.refund_player.dispatch_tag,
+        fallback_claim: contract.entries.fallback_claim.dispatch_tag,
+        reveal: contract.entries.reveal.dispatch_tag,
+        join: contract.entries.join.dispatch_tag,
+      }),
+      entryAbi: Object.freeze(Object.fromEntries(Object.entries(contract.entries).map(([name, entry]) => [name, entry.params]))),
     stateFieldOrder: contract.runtime_state.fields.map((f) => f.name),
   });
 }
@@ -122,6 +126,10 @@ function buildStateScript(game) {
     pushData(ZERO32),           // joiner_commit = zeroes at genesis
     pushData(encodeI64Fixed(game.potSompi)),       // pot
     pushData(encodeI64Fixed(game.deadlineDaa)),    // deadline_daa
+    pushData(encodeI64Fixed(game.creatorEven ? 1n : 0n)), // creator_even
+    pushData(encodeI64Fixed(0n)), // creator_choice
+    pushData(encodeI64Fixed(0n)), // joiner_choice
+    pushData(ZERO32), // first_revealer_hash
     pushData(encodeI64Fixed(0n)), // status = 8-byte int 0 (waiting for joiner)
   ];
   const total = parts.reduce((n, p) => n + p.length, 0);

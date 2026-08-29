@@ -87,6 +87,10 @@ fn main() -> ExitCode {
     values.insert("joiner_commit".into(), ArtifactValue::Bytes(vec![0u8; 32]));
     values.insert("pot".into(), ArtifactValue::Int(pot_sompi));
     values.insert("deadline_daa".into(), ArtifactValue::Int(deadline_daa));
+    values.insert("creator_even".into(), ArtifactValue::Int(0));
+    values.insert("creator_choice".into(), ArtifactValue::Int(0));
+    values.insert("joiner_choice".into(), ArtifactValue::Int(0));
+    values.insert("first_revealer_hash".into(), ArtifactValue::Bytes(vec![0u8; 32]));
     values.insert("status".into(), ArtifactValue::Int(0));
 
     let state_script = match encode_runtime_state_script(&abi, &contract.runtime_state, &values) {

@@ -1,0 +1,265 @@
+import { ProtocolError } from './protocol.js';
+import { EVEN_ODD_TEMPLATE } from './covenant/even-odd.mjs';
+import {
+  FALLBACK_CLAIM_DAA_OFFSET,
+  NO_REVEAL_REFUND_DAA_OFFSET,
+  resolveFallbackClaim,
+  resolveIndividualRefund,
+} from './terminal-actions.js';
+import { parityOutcome, resolveReveal, verifyRevealPreimage } from './reveal.js';
+import { loadWasmSdk, verifyWasmSignedSafeJson } from './wasm-transaction.js';
+
+export const TERMINAL_ENTRIES = Object.freeze({
+  reveal: 'reveal',
+  fallbackClaim: 'fallback_claim',
+  refund: 'refund_player',
+});
+
+export function buildKccEntrySignatureScript({ entry, args, wasm = loadWasmSdk() }) {
+  const dispatchTag = EVEN_ODD_TEMPLATE.dispatchTags?.[entry];
+  if (!dispatchTag) throw new ProtocolError('INVALID_TRANSACTION', `Unknown Even/Odd entry ${entry}`);
+  if (!Array.isArray(args)) throw new ProtocolError('INVALID_TRANSACTION', 'KCC entry arguments are required');
+
+  const builder = new wasm.ScriptBuilder();
+  for (const arg of args) addArgument(builder, arg);
+  builder.addData(Buffer.from(dispatchTag, 'hex'));
+  return builder.drain();
+}
+
+export function prepareFallbackClaimTransaction({ game, caller, currentDaaScore, gameInput, recipientScriptPublicKey, feeInputs = [], feeSompi = 0n, change, signature = new Uint8Array(65), publicKey }) {
+  const decision = resolveFallbackClaim({ game, caller, currentDaaScore });
+  if (!decision.available) throw new ProtocolError('ACTION_UNAVAILABLE', decision.message);
+  return prepareTerminalTransaction({
+    action: TERMINAL_ENTRIES.fallbackClaim,
+    gameInput,
+    inputSequence: FALLBACK_CLAIM_DAA_OFFSET,
+    args: [signature, publicKey],
+    payoutValue: game.potSompi,
+    recipientScriptPublicKey,
+    feeInputs,
+    feeSompi,
+    change,
+  });
+}
+
+export function prepareRevealTransaction({ game, caller, currentDaaScore, secret, gameInput, recipientScriptPublicKey, continuationScriptPublicKey, continuationCovenant, feeInputs = [], feeSompi = 0n, change, signature = new Uint8Array(65), publicKey }) {
+  const decision = resolveReveal({ game, caller, currentDaaScore, secret });
+  if (!decision.available) throw new ProtocolError('ACTION_UNAVAILABLE', decision.message);
+  const isFirstReveal = !game.firstReveal;
+  if (isFirstReveal && (typeof continuationScriptPublicKey !== 'string' || continuationScriptPublicKey.length === 0 || !continuationCovenant)) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Reveal continuation script public key is required');
+  }
+  if (!isFirstReveal && (typeof recipientScriptPublicKey !== 'string' || recipientScriptPublicKey.length === 0)) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Winner script public key is required');
+  }
+  return prepareTerminalTransaction({
+    action: TERMINAL_ENTRIES.reveal,
+    gameInput,
+    args: [signature, publicKey, { type: 'int', value: decision.choice }, decision.nonceHex],
+    payoutValue: game.potSompi,
+    recipientScriptPublicKey: isFirstReveal ? continuationScriptPublicKey : recipientScriptPublicKey,
+    extraOutputs: isFirstReveal ? [{ value: game.potSompi, scriptPublicKey: continuationScriptPublicKey, covenant: continuationCovenant }] : [],
+    omitPrimaryOutput: isFirstReveal,
+    feeInputs,
+    feeSompi,
+    change,
+  });
+}
+
+export function prepareIndividualRefundTransaction({ game, caller, currentDaaScore, gameInput, recipientScriptPublicKey, continuationScriptPublicKey, continuationCovenant, feeInputs = [], feeSompi = 0n, change, signature = new Uint8Array(65), publicKey }) {
+  const decision = resolveIndividualRefund({ game, caller, currentDaaScore });
+  if (!decision.available) throw new ProtocolError('ACTION_UNAVAILABLE', decision.message);
+  const requiresContinuation = !Object.values(game.refunds ?? {}).some(Boolean);
+  if (requiresContinuation && (typeof continuationScriptPublicKey !== 'string' || continuationScriptPublicKey.length === 0 || !continuationCovenant)) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Refund continuation script public key is required');
+  }
+  return prepareTerminalTransaction({
+    action: TERMINAL_ENTRIES.refund,
+    gameInput,
+    inputSequence: NO_REVEAL_REFUND_DAA_OFFSET,
+    args: [signature, publicKey],
+    payoutValue: game.stakeSompi,
+    recipientScriptPublicKey,
+    extraOutputs: requiresContinuation ? [{ value: game.stakeSompi, scriptPublicKey: continuationScriptPublicKey, covenant: continuationCovenant }] : [],
+    feeInputs,
+    feeSompi,
+    change,
+  });
+}
+
+export function prepareTerminalTransaction({ action, gameInput, inputSequence = 0n, args, payoutValue, recipientScriptPublicKey, extraOutputs = [], feeInputs = [], feeSompi = 0n, change, omitPrimaryOutput = false }) {
+  if (!gameInput || typeof gameInput !== 'object') throw new ProtocolError('INVALID_TRANSACTION', 'Current game UTXO is required');
+  if (!omitPrimaryOutput && (typeof recipientScriptPublicKey !== 'string' || recipientScriptPublicKey.length === 0)) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Recipient script public key is required');
+  }
+  if (typeof feeSompi !== 'bigint' || feeSompi < 0n) throw new ProtocolError('INVALID_FEE', 'Fee must be a non-negative sompi amount');
+  const input = normalizeInput({ ...gameInput, sequence: inputSequence }, buildKccEntrySignatureScript({ entry: action, args }));
+  const ordinaryInputs = feeInputs.map((entry) => normalizeInput(entry, ''));
+  const totalIn = [input, ...ordinaryInputs].reduce((sum, entry) => sum + BigInt(entry.utxo.amount), 0n);
+  const payout = positiveAmount(payoutValue, 'payout value');
+  const outputs = [...(omitPrimaryOutput ? [] : [{ value: String(payout), scriptPublicKey: recipientScriptPublicKey, covenant: null }]), ...normalizeExtraOutputs(extraOutputs)];
+  const terminalOut = outputs.reduce((sum, output) => sum + BigInt(output.value), 0n);
+  const expectedChange = totalIn - terminalOut - feeSompi;
+  if (expectedChange < 0n) throw new ProtocolError('INSUFFICIENT_UTXOS', 'Inputs cannot fund the payout and fee');
+  if (change !== undefined && BigInt(change.value) !== expectedChange) {
+    throw new ProtocolError('FEE_SUBSTITUTION', 'Change does not match the exact fee');
+  }
+  if (expectedChange > 0n) {
+    if (!change?.scriptPublicKey) throw new ProtocolError('INVALID_TRANSACTION', 'Change script public key is required');
+    outputs.push({ value: String(expectedChange), scriptPublicKey: change.scriptPublicKey, covenant: null });
+  }
+  return Object.freeze({
+    action,
+    feeSompi,
+    payoutSompi: payout,
+    transaction: {
+      id: '00'.repeat(32),
+      version: 1,
+      inputs: [input, ...ordinaryInputs],
+      outputs,
+      subnetworkId: '00'.repeat(20),
+      lockTime: '0',
+      gas: '0',
+      storageMass: '0',
+      payload: '',
+    },
+  });
+}
+
+export function validateRevealTemplate({ game, caller, currentDaaScore, secret, transaction }) {
+  const decision = resolveReveal({ game, caller, currentDaaScore, secret });
+  if (!decision.available) throw new ProtocolError('ACTION_UNAVAILABLE', decision.message);
+  if (!verifyRevealPreimage({ commitment: game.commitments?.[caller] ?? game.participants?.[caller]?.commitment, choice: decision.choice, nonceHex: decision.nonceHex })) {
+    throw new ProtocolError('INVALID_REVEAL', 'Reveal preimage does not match commitment');
+  }
+  const tx = parseTransaction(transaction);
+  if (!game.firstReveal) {
+    assertRevealContinuation(tx, game.potSompi);
+  } else {
+    const winner = parityOutcome({
+      creatorChoice: caller === 'creator' ? decision.choice : game.creatorChoice,
+      joinerChoice: caller === 'joiner' ? decision.choice : game.joinerChoice,
+      creatorEven: game.creatorEven,
+    });
+    assertSinglePayout(tx, game.potSompi, game.participants?.[winner]?.scriptPublicKey, 'winner payout');
+  }
+  assertFeeSeparated(tx);
+  return tx;
+}
+
+function assertRevealContinuation(transaction, value) {
+  const continuations = transaction.outputs.filter((output) => BigInt(output?.value ?? -1) === value && output?.covenant);
+  if (continuations.length !== 1) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'First reveal must preserve the pot in one covenant continuation output');
+  }
+}
+
+function assertSinglePayout(transaction, value, scriptPublicKey, name) {
+  const payouts = transaction.outputs.filter((output) => BigInt(output?.value ?? -1) === BigInt(value) && output?.scriptPublicKey === scriptPublicKey);
+  if (payouts.length !== 1) {
+    throw new ProtocolError('INVALID_TRANSACTION', `Transaction must contain exactly one ${name}`);
+  }
+}
+
+function assertFeeSeparated(transaction) {
+  const totalIn = transaction.inputs.reduce((sum, input) => sum + BigInt(input?.utxo?.amount ?? -1), 0n);
+  const totalOut = transaction.outputs.reduce((sum, output) => sum + BigInt(output?.value ?? -1), 0n);
+  if (totalIn < totalOut) throw new ProtocolError('FEE_SUBSTITUTION', 'Payout value cannot fund fees');
+}
+
+function parseTransaction(transaction) {
+  const parsed = typeof transaction === 'string' ? JSON.parse(transaction) : transaction;
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.inputs) || !Array.isArray(parsed.outputs)) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Transaction template must include inputs and outputs');
+  }
+  return parsed;
+}
+
+function normalizeExtraOutputs(outputs) {
+  if (!Array.isArray(outputs)) throw new ProtocolError('INVALID_TRANSACTION', 'Extra outputs must be an array');
+  return outputs.map((output) => {
+    if (typeof output?.scriptPublicKey !== 'string' || output.scriptPublicKey.length === 0) {
+      throw new ProtocolError('INVALID_TRANSACTION', 'Extra output script public key is required');
+    }
+    return {
+      value: String(positiveAmount(output.value, 'extra output value')),
+      scriptPublicKey: output.scriptPublicKey,
+      covenant: output.covenant ?? null,
+    };
+  });
+}
+
+export function serializeTerminalTransaction(prepared, wasm = loadWasmSdk()) {
+  if (!prepared?.transaction) throw new ProtocolError('INVALID_TRANSACTION', 'Prepared terminal transaction is required');
+  try {
+    const transaction = wasm.Transaction.deserializeFromSafeJSON(JSON.stringify(prepared.transaction));
+    transaction.finalize();
+    return transaction.serializeToSafeJSON();
+  } catch (error) {
+    throw new ProtocolError('INVALID_TRANSACTION', `WASM rejected terminal transaction: ${error?.message ?? error}`);
+  }
+}
+
+export function verifySignedTerminalTransaction({ prepared, signedTxJson }) {
+  if (!prepared?.transaction || typeof signedTxJson !== 'string') {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Prepared and signed terminal transactions are required');
+  }
+  return verifyWasmSignedSafeJson({
+    preparedTxJson: serializeTerminalTransaction(prepared),
+    signedTxJson,
+    policy: {},
+  });
+}
+
+function addArgument(builder, argument) {
+  if (argument?.type === 'int') {
+    if (typeof argument.value !== 'bigint' && !Number.isSafeInteger(argument.value)) throw new ProtocolError('INVALID_TRANSACTION', 'KCC integer argument must be a safe integer');
+    builder.addI64(BigInt(argument.value));
+    return;
+  }
+  const value = argument?.value ?? argument;
+  const bytes = value instanceof Uint8Array || Buffer.isBuffer(value) ? value : hexBytes(value);
+  if (bytes.length === 0) throw new ProtocolError('INVALID_TRANSACTION', 'KCC byte argument cannot be empty');
+  builder.addData(bytes);
+}
+
+function normalizeInput(entry, signatureScript) {
+  const txid = entry.transactionId ?? entry.outpoint?.transactionId;
+  const index = entry.index ?? entry.outpoint?.index;
+  if (typeof txid !== 'string' || !/^[0-9a-f]{64}$/i.test(txid) || !Number.isInteger(index) || index < 0) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Terminal input outpoint is invalid');
+  }
+  if (typeof entry.scriptPublicKey !== 'string' || entry.scriptPublicKey.length === 0) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Terminal input script public key is required');
+  }
+  return {
+    transactionId: txid.toLowerCase(),
+    index,
+    sequence: String(entry.sequence ?? 0),
+    sigOpCount: Number(entry.sigOpCount ?? 0),
+    computeBudget: Number(entry.computeBudget ?? 50),
+    signatureScript,
+    utxo: {
+      amount: String(positiveAmount(entry.amount ?? entry.utxo?.amount, 'input amount')),
+      scriptPublicKey: entry.scriptPublicKey ?? entry.utxo?.scriptPublicKey,
+      blockDaaScore: String(entry.blockDaaScore ?? entry.utxo?.blockDaaScore ?? 0),
+      isCoinbase: entry.isCoinbase === true || entry.utxo?.isCoinbase === true,
+      ...(entry.covenantId || entry.utxo?.covenantId ? { covenantId: entry.covenantId ?? entry.utxo.covenantId } : {}),
+    },
+  };
+}
+
+function positiveAmount(value, name) {
+  try {
+    const amount = typeof value === 'bigint' ? value : BigInt(value);
+    if (amount > 0n) return amount;
+  } catch {}
+  throw new ProtocolError('INVALID_TRANSACTION', `${name} must be a positive integer`);
+}
+
+function hexBytes(value) {
+  if (typeof value !== 'string' || value.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(value)) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Byte argument must be hexadecimal');
+  }
+  return Uint8Array.from(Buffer.from(value, 'hex'));
+}

@@ -21,15 +21,15 @@ test('blake2b-256 single block matches published vector', () => {
 
 test('blake2b-256 multi-block matches the covenant-oracle digest', () => {
   // Cross-validated against the Rust covenant-oracle (blake2b_simd hash_length(32))
-  // over the exact 469-byte Even/Odd instance with creator_pk=0x07*33,
+  // over the exact 1381-byte Even/Odd instance with creator_pk=0x07*33,
   // creator_commit=0x09*32, pot=100000000, deadline_daa=500000000000.
   const creatorPubkey = new Array(33).fill(7);
   const creatorCommit = new Array(32).fill(9);
   const inst = deriveGameInstance({ creatorPubkey, creatorCommit, potSompi: 100000000n, deadlineDaa: 500000000000n });
-  assert.equal(inst.redeemScript.length, 469);
+  assert.equal(inst.redeemScript.length, 1381);
   assert.equal(
     Buffer.from(blake2b256(Uint8Array.from(inst.redeemScript))).toString('hex'),
-    'ab16f81ac4633c9d7949c4d3b3a3841d6ea7e0d17b62cffeff001be0708be158'
+    '3770a5c40d27963a1c895e2fd3203aacc9259829dc5824517af8039efc3cb269'
   );
 });
 
@@ -64,10 +64,10 @@ test('bech32 decode round-trips and rejects a corrupt checksum', () => {
 test('pinned template hash verifies against the compiled artifact', () => {
   const v = verifyTemplateHash();
   assert.equal(v.computed, EVEN_ODD_TEMPLATE.templateHash);
-  assert.equal(v.computed, '9b3b49235f1797ca773b2d3702a08a6141f1ec7e555886a06bb28dafb54a0d67');
+  assert.equal(v.computed, '49532e109a345ff8d9cf218afb38004494664d610a0da8a51a545307e3b1f815');
   assert.equal(v.prefixLen, 1);
-  assert.equal(v.suffixLen, 309);
-  assert.equal(v.state.length, 159);
+  assert.equal(v.suffixLen, 1161);
+  assert.equal(v.state.length, 219);
 });
 
 test('reproducibility manifest matches covenant source and artifact bytes', () => {
@@ -85,10 +85,10 @@ test('per-game instance matches the covenant-oracle P2SH address', () => {
   const inst = deriveGameInstance({ creatorPubkey, creatorCommit, potSompi: 100000000n, deadlineDaa: 500000000000n });
   // Governed by the Rust covenant-oracle: encode_runtime_state_script + script_parts
   // + Address::new(Testnet, ScriptHash, blake2b256(instance)).
-  assert.equal(inst.address, 'kaspatest:pz43d7q6c33ne8tef8zd8varsswkaflq69ak9nl7luqphcrs30s4spqnj9z6u');
+  assert.equal(inst.address, 'kaspatest:pqmhpfwyp5nevwsu390zl5eq82kvjfvc98w9sfz30tuq88hu8jexjrs9z5qcx');
   assert.equal(
     inst.p2shScript.toString('hex'),
-    'aa20ab16f81ac4633c9d7949c4d3b3a3841d6ea7e0d17b62cffeff001be0708be15887'
+    'aa203770a5c40d27963a1c895e2fd3203aacc9259829dc5824517af8039efc3cb26987'
   );
   assert.equal(inst.templateHash, EVEN_ODD_TEMPLATE.templateHash);
   assert.equal(inst.address.startsWith('kaspatest:'), true);

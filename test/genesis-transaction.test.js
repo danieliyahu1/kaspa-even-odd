@@ -30,7 +30,7 @@ test('computes the Rusty Kaspa v2.0.1 covenant-id oracle vector', () => {
       { transactionId: '11'.repeat(32), index: 2 },
       [{ index: 0, output }],
     ),
-    '3f02981de2d4534e46d84b13f31c5556ac1555babe137e3132c4625dbea4b02d',
+    'dfbc9a05b651d445e1568b4e2403c7adafa2f45f5f942b816926b691a91cf4a4',
   );
 });
 
@@ -38,10 +38,10 @@ test('constructs output zero with exact stake, P2SH, and genesis binding', () =>
   const output = createGenesisGameOutput({ request, authorizingInput: 0, authorizingOutpoint: input() });
   assert.deepEqual(output, {
     value: '100000000',
-    scriptPublicKey: '0000' + request.covenantScriptPublicKey,
+    scriptPublicKey: '0000aa20e26fda83081e296bc7a5367d42234fdf7617d7b853c3360b1e8c20b25c40587f87',
     covenant: {
       authorizingInput: 0,
-      covenantId: 'ef0a34cffd6048d54ac61ac85e4f86855e9faacfe84751bf6d1dcd0bccbf0591',
+      covenantId: '97c97005d786e63340895837f8a912fd8a430aa3775812a23e2514467b500102',
     },
   });
 });

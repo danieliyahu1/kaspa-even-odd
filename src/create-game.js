@@ -30,17 +30,19 @@ export function prepareCreateGame({
   const publicKey = normalizeHex(creatorPublicKey, 33, 'creator public key');
   const commitment = normalizeHex(creatorCommitment, 32, 'creator commitment');
   const deadline = normalizePositiveBigInt(deadlineDaa, 'deadline DAA score');
-  const covenant = deriveGameInstance({
+    const covenant = deriveGameInstance({
     creatorPubkey: publicKey,
     creatorCommit: commitment,
     potSompi: stakeSompi,
-    deadlineDaa: deadline,
+     deadlineDaa: deadline,
+     creatorEven: side === 'even',
   });
   return Object.freeze({
     protocolVersion: 'EO/v1',
     network: NETWORK,
     creatorAddress,
     side,
+    creatorEven: side === 'even',
     stakeSompi,
     feeSompi,
     creatorPublicKey: publicKey,

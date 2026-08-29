@@ -87,6 +87,7 @@ test('WASM covenant address matches the pure-JS game instance oracle', () => {
     creatorCommit: new Array(32).fill(9),
     potSompi: request.stakeSompi,
     deadlineDaa: request.deadlineDaa,
+    creatorEven: true,
   });
   assert.equal(transaction.outputs[0].scriptPublicKey, '0000' + instance.p2shScript.toString('hex'));
 });

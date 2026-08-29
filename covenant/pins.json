@@ -7,10 +7,12 @@
   },
   "covenant": {
     "source": "covenant/even_odd.sil",
-    "sourceSha256": "f5c9f315bfcd4c73c6cbf31646d75ff07b6056c2c29ac276f22ff13b386a3876",
+    "sourceSha256": "d47197716a9e68622a848abb4a5ec5c95a9b8498bd26f541fcd0b9e2375537cf",
     "artifact": "covenant/even_odd.template.artifact.json",
-    "artifactSha256": "3cc88239b120e2b4e7094a86af647ad16560380277f01cf8e12276a817c3f316",
-    "templateHash": "9b3b49235f1797ca773b2d3702a08a6141f1ec7e555886a06bb28dafb54a0d67"
+    "artifactSha256": "ba9cfb065c904e4b67f284fe7cddb8d83548ecc14cc86e992668703a90681a5f",
+    "templateHash": "49532e109a345ff8d9cf218afb38004494664d610a0da8a51a545307e3b1f815",
+    "constructorArgs": "covenant/constructor-args.json",
+    "constructorArgsSha256": "010a382a99ae0d095b5893fb77f34d7ccd715df782f2c9be507b1e665b1664e8"
   },
   "rustyKaspa": {
     "release": "v2.0.1",

@@ -2,6 +2,9 @@ import { ProtocolError } from './protocol.js';
 import { readAddressUtxos, submitSignedTransaction, KaspaCreationConfirmer } from './kaspa-adapter.js';
 import { estimateCreationFee, selectOrdinaryUtxos, CREATION_MASS_BOUND } from './fee-policy.js';
 import { createWasmGenesisSafeJson, verifyWasmSignedSafeJson } from './wasm-transaction.js';
+import { blake2b256 } from './hashes/blake2b.mjs';
+import { prepareFallbackClaimTransaction, prepareIndividualRefundTransaction, prepareRevealTransaction, serializeTerminalTransaction } from './terminal-transactions.js';
+import { prepareJoinTransaction, serializeJoinTransaction, verifySignedJoinTransaction } from './join-transactions.js';
 
 const DEFAULT_PRIORITY_BUCKET = 0;
 
@@ -60,6 +63,33 @@ export class KaspaChainAdapter {
     return { policy: prepared.policy };
   }
 
+  async prepareJoin({ request, game }) {
+    const utxos = await readAddressUtxos({ rpc: this.rpc, addresses: [request.joinerAddress] });
+    const entries = Array.isArray(utxos) ? utxos : utxos?.entries ?? [];
+    const feeSompi = request.feeSompi ?? 0n;
+    const potSompi = BigInt(game.potSompi);
+    const selected = selectOrdinaryUtxos({ utxos: entries, targetSompi: potSompi + feeSompi }).selected;
+    const selectedEntries = entries.filter((entry) => selected.some((item) => (entry.transactionId ?? entry.outpoint?.transactionId)?.toLowerCase() === item.transactionId && (entry.index ?? entry.outpoint?.index) === item.index));
+    const total = selectedEntries.reduce((sum, entry) => sum + BigInt(entry.amount ?? entry.utxo?.amount), 0n);
+    const change = total > potSompi + feeSompi ? { value: total - potSompi - feeSompi, scriptPublicKey: request.changeScriptPublicKey ?? selectedEntries[0]?.scriptPublicKey ?? selectedEntries[0]?.utxo?.scriptPublicKey } : undefined;
+    const transaction = prepareJoinTransaction({ game, joinerPublicKey: request.joinerPublicKey, joinerCommitment: request.joinerCommitment, gameInput: game.currentInput, feeInputs: selectedEntries, feeSompi, change, continuationScriptPublicKey: request.continuationScriptPublicKey ?? game.continuationScriptPublicKey, continuationCovenant: request.continuationCovenant ?? game.continuationCovenant });
+    const txJson = serializeJoinTransaction(transaction);
+    return Object.freeze({ network: request.network, joinerAddress: request.joinerAddress, txJson, preparedHash: Buffer.from(blake2b256(new TextEncoder().encode(txJson))).toString('hex'), feeSompi, gameId: request.gameId });
+  }
+
+  async verifySignedJoin({ prepared, signedTxJson }) {
+    verifySignedJoinTransaction({ preparedTxJson: prepared.txJson, signedTxJson });
+    return { network: prepared.network };
+  }
+
+  async submitJoin({ signedTxJson }) {
+    return submitSignedTransaction({ rpc: this.rpc, transaction: JSON.parse(signedTxJson) });
+  }
+
+  async confirmJoin({ transactionId }) {
+    return this.confirmTerminal({ transactionId });
+  }
+
   async submitCreation(signedTransaction) {
     return submitSignedTransaction({ rpc: this.rpc, transaction: signedTransaction });
   }
@@ -78,6 +108,62 @@ export class KaspaChainAdapter {
       intervalMs: this.confidenceIntervalMs,
     });
     return confirmer.confirmCreation({ transactionId });
+  }
+
+  async prepareTerminalAction({ action, request, game }) {
+    const builder = { reveal: prepareRevealTransaction, fallback_claim: prepareFallbackClaimTransaction, individual_refund: prepareIndividualRefundTransaction }[action];
+    if (!builder) throw new ProtocolError('UNSUPPORTED_ACTION', `Unsupported terminal action ${action}`);
+    const prepared = builder({
+      game,
+      caller: request.caller,
+      currentDaaScore: request.currentDaaScore ?? game.currentDaaScore,
+      secret: request.secret,
+      gameInput: request.gameInput ?? game.currentInput,
+      recipientScriptPublicKey: request.recipientScriptPublicKey,
+      continuationScriptPublicKey: request.continuationScriptPublicKey,
+      continuationCovenant: request.continuationCovenant,
+      feeInputs: request.feeInputs ?? [],
+      feeSompi: request.feeSompi ?? 0n,
+      change: request.change,
+      signature: request.signature,
+      publicKey: request.publicKey,
+    });
+    const txJson = serializeTerminalTransaction(prepared);
+    return Object.freeze({
+      txJson,
+      preparedHash: Buffer.from(blake2b256(new TextEncoder().encode(txJson))).toString('hex'),
+      feeSompi: prepared.feeSompi,
+      action,
+    });
+  }
+
+  async submitTerminal({ signedTxJson }) {
+    let transaction;
+    try {
+      transaction = JSON.parse(signedTxJson);
+    } catch {
+      throw new ProtocolError('INVALID_TRANSACTION', 'Signed terminal SafeJSON is invalid');
+    }
+    return submitSignedTransaction({ rpc: this.rpc, transaction });
+  }
+
+  async confirmTerminal({ transactionId }) {
+    if (typeof this.rpc.confirmTransaction === 'function') {
+      return this.rpc.confirmTransaction({ transactionId, confirmations: 1 });
+    }
+    if (typeof this.rpc.getTransaction === 'function') {
+      const transaction = await this.rpc.getTransaction({ transactionId });
+      if (transaction?.isConfirmed === true || transaction?.status === 'confirmed') {
+        return { status: 'confirmed', acceptingDaaScore: transaction.acceptingDaaScore, confirmedDaaScore: transaction.confirmedDaaScore };
+      }
+      return { status: transaction ? 'observed' : 'stale' };
+    }
+    return { status: 'observed' };
+  }
+
+  async readGameState({ gameId, network }) {
+    if (typeof this.rpc.getGameState !== 'function') throw new ProtocolError('CHAIN_UNAVAILABLE', 'RPC game-state reconstruction is not configured');
+    return this.rpc.getGameState({ gameId, network });
   }
 
   async #readPriorityFeerate() {

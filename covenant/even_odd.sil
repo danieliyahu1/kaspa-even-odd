@@ -5,7 +5,9 @@ pragma silverscript ^0.1.0;
 // Phase model (runtime `status`):
 //   0 = waiting for a joiner (creator funds alone)
 //   1 = joined (both stakes locked; outcome settled at reveal)
-//   2 = settled (pot paid to the winner)
+//   2 = first reveal confirmed
+//   3 = settled (pot paid to the winner)
+//   4 = fallback claim confirmed
 //
 // Lock flow (KEO-1): the creator funds a covenant output holding the exact
 // stake. Until a joiner matches, only `refund` may spend it, and only after the
@@ -18,7 +20,8 @@ contract EvenOdd(
     byte[32] init_creator_hash,
     byte[32] init_creator_commit,
     int init_pot,
-    int init_deadline_daa
+    int init_deadline_daa,
+    int init_creator_even
 ) {
     byte[32] creator_hash = init_creator_hash;
     byte[32] joiner_hash = byte[32](0x0000000000000000000000000000000000000000000000000000000000000000);
@@ -26,6 +29,10 @@ contract EvenOdd(
     byte[32] joiner_commit = byte[32](0x0000000000000000000000000000000000000000000000000000000000000000);
     int pot = init_pot;
     int deadline_daa = init_deadline_daa;
+    int creator_even = init_creator_even;
+    int creator_choice = 0;
+    int joiner_choice = 0;
+    byte[32] first_revealer_hash = byte[32](0x0000000000000000000000000000000000000000000000000000000000000000);
     int status = 0;
 
     // Creator reclaims after the join deadline if no joiner matched.
@@ -79,7 +86,120 @@ contract EvenOdd(
             joiner_commit: new_joiner_commit,
             pot: pot + pot,
             deadline_daa: deadline_daa,
+            creator_even: creator_even,
+            creator_choice: creator_choice,
+            joiner_choice: joiner_choice,
+            first_revealer_hash: first_revealer_hash,
             status: 1
         });
     }
+
+    entry reveal(sig player_sig, pubkey player_pk, int choice, byte[32] nonce) {
+        require(status == 1 || status == 2);
+        require(choice == 0 || choice == 1);
+        require(checkSig(player_sig, player_pk));
+        byte[32] player_hash = blake2b(byte[](player_pk));
+        require(player_hash == creator_hash || player_hash == joiner_hash);
+
+        if (player_hash == creator_hash) {
+            require(blake2b(byte[]((choice as byte[8]) + nonce)) == creator_commit);
+        } else {
+            require(blake2b(byte[]((choice as byte[8]) + nonce)) == joiner_commit);
+        }
+
+        if (status == 1) {
+            int next_creator_choice = creator_choice;
+            int next_joiner_choice = joiner_choice;
+            if (player_hash == creator_hash) {
+                next_creator_choice = choice;
+            } else {
+                next_joiner_choice = choice;
+            }
+            require(OpAuthOutputCount(this.activeInputIndex) == 1);
+            int out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+            require(tx.outputs[out_idx].value == pot);
+            validateOutputState(out_idx, State {
+                creator_hash: creator_hash,
+                joiner_hash: joiner_hash,
+                creator_commit: creator_commit,
+                joiner_commit: joiner_commit,
+                pot: pot,
+                deadline_daa: deadline_daa,
+                creator_even: creator_even,
+                creator_choice: next_creator_choice,
+                joiner_choice: next_joiner_choice,
+                first_revealer_hash: player_hash,
+                status: 2
+            });
+        } else {
+            require(player_hash != first_revealer_hash);
+            require(OpAuthOutputCount(this.activeInputIndex) == 0);
+            int final_creator_choice = creator_choice;
+            int final_joiner_choice = joiner_choice;
+            if (player_hash == creator_hash) {
+                final_creator_choice = choice;
+            } else {
+                final_joiner_choice = choice;
+            }
+            int winner_idx = 1;
+            if ((final_creator_choice + final_joiner_choice) % 2 == creator_even) {
+                winner_idx = 0;
+            }
+            require(tx.outputs[winner_idx].value == pot);
+            require(tx.outputs[winner_idx].scriptPubKey != tx.inputs[this.activeInputIndex].scriptPubKey);
+        }
+    }
+
+    entry fallback_claim(sig player_sig, pubkey player_pk) {
+        require(status == 2);
+        require(this.ageDaa >= 3000);
+        require(checkSig(player_sig, player_pk));
+        require(blake2b(byte[](player_pk)) == first_revealer_hash);
+        require(OpAuthOutputCount(this.activeInputIndex) == 0);
+        require(tx.outputs[0].value == pot);
+        require(tx.outputs[0].scriptPubKey != tx.inputs[this.activeInputIndex].scriptPubKey);
+    }
+
+    entry refund_player(sig player_sig, pubkey player_pk) {
+        require(status == 1 || status == 5 || status == 6);
+        require(this.ageDaa >= 3000);
+        require(checkSig(player_sig, player_pk));
+        byte[32] player_hash = blake2b(byte[](player_pk));
+        require(player_hash == creator_hash || player_hash == joiner_hash);
+
+        if (status == 5) {
+            require(player_hash == joiner_hash);
+            require(OpAuthOutputCount(this.activeInputIndex) == 0);
+            require(tx.outputs[0].value == pot);
+        } else if (status == 6) {
+            require(player_hash == creator_hash);
+            require(OpAuthOutputCount(this.activeInputIndex) == 0);
+            require(tx.outputs[0].value == pot);
+        } else {
+            require(OpAuthOutputCount(this.activeInputIndex) == 1);
+            int out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
+            require(out_idx != 0);
+            require(tx.outputs[out_idx].value == pot / 2);
+            int next_status = 5;
+            if (player_hash == joiner_hash) {
+                next_status = 6;
+            }
+            validateOutputState(out_idx, State {
+                creator_hash: creator_hash,
+                joiner_hash: joiner_hash,
+                creator_commit: creator_commit,
+                joiner_commit: joiner_commit,
+                pot: pot / 2,
+                deadline_daa: deadline_daa,
+                creator_even: creator_even,
+                creator_choice: creator_choice,
+                joiner_choice: joiner_choice,
+                first_revealer_hash: first_revealer_hash,
+                status: next_status
+            });
+            require(tx.outputs[0].value == pot / 2);
+        }
+        require(tx.outputs[0].scriptPubKey != tx.inputs[this.activeInputIndex].scriptPubKey);
+    }
+
 }

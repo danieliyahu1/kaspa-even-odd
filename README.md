@@ -16,6 +16,11 @@ secret, commitment preimage, wallet key, or transaction template.
   to prepare and verify Rusty Kaspa v2 SafeJSON, delegates signing only to
   Kastle, checkpoints the non-secret lifecycle for recovery, and shares the
   confirmed transaction ID only after authoritative revalidation.
+- `src/join-game.js` parses direct invites, re-reads confirmed game state,
+  enforces the joining deadline and exact matching stake, and checkpoints the
+  join signing, broadcast, confirmation, and recovery lifecycle.
+- `src/join-transactions.js` builds the join covenant input and doubled-pot
+  continuation with ordinary joiner fee inputs kept separate.
 - `src/covenant-artifact.js` validates a pinned SilverScript artifact before
   it can be used. SilverScript compilation is intentionally a build-time
   concern; the browser consumes the resulting artifact.
@@ -29,6 +34,15 @@ secret, commitment preimage, wallet key, or transaction template.
   policy via `src/fee-policy.js`), WASM `verifySignedCreation`,
   `submitCreation` over wRPC, and `confirmCreation` gated on one DAA
   confirmation.
+- `src/terminal-actions.js` reduces confirmed game state into fallback-claim and
+  individual-refund eligibility, including DAA deadlines, race precedence, and
+  fail-closed user-facing outcomes.
+- `src/terminal-transactions.js` builds KCC entry scripts and Rusty Kaspa v2
+  SafeJSON templates for reveal-adjacent terminal actions, claims, and refunds;
+  the browser still signs only the prepared transaction.
+- `src/terminal-lifecycle.js` provides the authoritative read, idempotent
+  checkpoint, sign, submit, confirmation, and recovery lifecycle for terminal
+  actions.
 - `src/wasm-transaction.js` loads the pinned WASM SDK (`Transaction`,
   `GenesisCovenantGroup`, `populateGenesisCovenants`, `serializeToSafeJSON`)
   and rejects any Kastle mutation of sighash-relevant fields.
@@ -47,11 +61,14 @@ secret, commitment preimage, wallet key, or transaction template.
 The canonical testnet covenant artifact is compiled by `silverc` 0.1.0 from
 `covenant/even_odd.sil` into `covenant/even_odd.template.artifact.json`:
 
-- **contract**: `EvenOdd`, template hash `9b3b49…0d67`
-- **state span**: `offset 1, len 159` (7 fields: `creator_hash`,
+- **contract**: `EvenOdd`, template hash `49532e…f815`
+- **state span**: `offset 1, len 219` (11 fields: `creator_hash`,
   `joiner_hash`, `creator_commit`, `joiner_commit`, `pot`, `deadline_daa`,
+  `creator_even`, `creator_choice`, `joiner_choice`, `first_revealer_hash`,
   `status`)
 - **dispatch tags**: `join = 51710335`, `refund = acb37330`
+- **terminal dispatch tags**: `reveal = d693d4f5`, `fallback_claim = e4d7e9ea`,
+  `refund_player = 28ba1e1d`
 - **P2SH-256**: `0xaa 0x20 <blake2b-256(redeemScript)>`; address prefix
   `kaspatest`, version byte 8.
 - **reproducibility manifest**: `covenant/pins.json` pins the SilverScript source

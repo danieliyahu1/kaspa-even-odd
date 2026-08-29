@@ -775,6 +775,9 @@ dependencies = [
  "faster-hex 0.10.0",
  "kaspa-addresses",
  "kaspa-consensus-core",
+ "kaspa-txscript",
+ "kaspa-txscript-errors",
+ "secp256k1",
  "serde_json",
  "silverscript-abi",
 ]

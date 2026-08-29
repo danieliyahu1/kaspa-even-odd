@@ -75,6 +75,22 @@ function compressInPlace(cv, blockWordsArr, blockLen, counter, flags) {
   for (let i = 0; i < 8; i++) cv[i] = state[i] >>> 0;
 }
 
+function cvToBytes(cv) {
+  const bytes = new Uint8Array(32);
+  for (let i = 0; i < 8; i++) {
+    const w = cv[i] >>> 0;
+    bytes[i * 4] = w & 0xff;
+    bytes[i * 4 + 1] = (w >>> 8) & 0xff;
+    bytes[i * 4 + 2] = (w >>> 16) & 0xff;
+    bytes[i * 4 + 3] = (w >>> 24) & 0xff;
+  }
+  return bytes;
+}
+
+function outputBytes(words) {
+  return cvToBytes(words.slice(0, 8));
+}
+
 // Hash a single chunk: returns the input chaining value (before the final block),
 // plus the final block words/len/flags needed for the ROOT compression.
 function hashChunk(chunk, chunkCounter, key) {
@@ -113,18 +129,26 @@ function blake3(input) {
   if (typeof input === 'string') input = new TextEncoder().encode(input);
   if (input.length <= CHUNK_LEN) {
     const { cv, finalWords, finalLen, blockFlags } = hashChunk(input, 0, null);
-    const out = compress(cv, finalWords, finalLen, 0, blockFlags | ROOT);
-    const outBytes = new Uint8Array(32);
-    for (let i = 0; i < 8; i++) {
-      const w = out[i] >>> 0;
-      outBytes[i * 4] = w & 0xff;
-      outBytes[i * 4 + 1] = (w >>> 8) & 0xff;
-      outBytes[i * 4 + 2] = (w >>> 16) & 0xff;
-      outBytes[i * 4 + 3] = (w >>> 24) & 0xff;
-    }
-    return outBytes;
+    return outputBytes(compress(cv, finalWords, finalLen, 0, blockFlags | ROOT));
   }
-  throw new Error('blake3: inputs > 1024 bytes not implemented');
+  if (input.length <= CHUNK_LEN * 2) {
+    const left = chunkCv(input.slice(0, CHUNK_LEN), 0);
+    const right = chunkCv(input.slice(CHUNK_LEN), 1);
+    return parentOutput(left, right, ROOT);
+  }
+  throw new Error('blake3: inputs > 2048 bytes not implemented');
+}
+
+function chunkCv(chunk, chunkCounter) {
+  const { cv, finalWords, finalLen, blockFlags } = hashChunk(chunk, chunkCounter, null);
+  return compress(cv, finalWords, finalLen, chunkCounter, blockFlags).slice(0, 8);
+}
+
+function parentOutput(left, right, flags) {
+  const block = new Uint8Array(64);
+  block.set(cvToBytes(left), 0);
+  block.set(cvToBytes(right), 32);
+  return outputBytes(compress(IV, blockWords(block), BLOCK_LEN, 0, PARENT | flags));
 }
 
 export { blake3, PARENT };

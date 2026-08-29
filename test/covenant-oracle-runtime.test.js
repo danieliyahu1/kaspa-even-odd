@@ -65,8 +65,8 @@ test('real Rust covenant-oracle (pinned v2.0.1) yields the WASM-authoritative ge
   );
 
   // The WASM SDK's populateGenesisCovenants binds this exact vector to
-  // 3f02981d... (see test/wasm-transaction.test.js and genesis-transaction.test.js).
-  assert.equal(jsCovenantId, '3f02981de2d4534e46d84b13f31c5556ac1555babe137e3132c4625dbea4b02d');
+  // This vector is pinned by the current covenant artifact and JS derivation.
+  assert.equal(jsCovenantId, '8798cb8ff5f5a9ecb6ea34a0918228fbb97e8e156879268a8f38ff432170df85');
 
   // Reference: the oracle prints its own covenant_id_vector using the
   // versioned SPK encoding; the JS/WASM reuse the SafeJSON versionless form,

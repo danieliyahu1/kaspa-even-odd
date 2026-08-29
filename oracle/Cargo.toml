@@ -16,6 +16,9 @@ exclude = []
 [workspace.dependencies]
 kaspa-addresses = { git = "https://github.com/kaspanet/rusty-kaspa", rev = "a41a333b08848f41bf737b72592e463a6011b8ac" }
 kaspa-consensus-core = { git = "https://github.com/kaspanet/rusty-kaspa", rev = "a41a333b08848f41bf737b72592e463a6011b8ac" }
+kaspa-txscript = { git = "https://github.com/kaspanet/rusty-kaspa", rev = "a41a333b08848f41bf737b72592e463a6011b8ac" }
+kaspa-txscript-errors = { git = "https://github.com/kaspanet/rusty-kaspa", rev = "a41a333b08848f41bf737b72592e463a6011b8ac" }
+secp256k1 = "0.29"
 blake2b_simd = "1.0.2"
 faster-hex = "0.10"
 serde_json = "1.0"
@@ -24,9 +27,12 @@ serde_json = "1.0"
 silverscript-abi = { path = "../silverscript/silverscript-abi" }
 kaspa-addresses = { workspace = true }
 kaspa-consensus-core = { workspace = true }
+kaspa-txscript = { workspace = true }
+kaspa-txscript-errors = { workspace = true }
 blake2b_simd = { workspace = true }
 serde_json = { workspace = true }
 faster-hex = { workspace = true }
+secp256k1 = { workspace = true }
 
 [profile.release]
 lto = true
