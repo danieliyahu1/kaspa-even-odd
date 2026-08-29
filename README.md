@@ -110,7 +110,7 @@ protocol implementation remains the module exported by `src/index.js`.
 ```sh
 npm run check
 npm test
-docker build --platform linux/arm64 -t ghcr.io/<owner>/<repo>/kaspa-even-odd:sha-<git-sha> .
+docker build --platform linux/arm64 -t ghcr.io/danieliyahu1/kaspa-even-odd/kaspa-even-odd:sha-<git-sha> .
 kubectl apply -f deploy/namespace.yaml
 kubectl apply -f deploy/service.yaml
 ```
