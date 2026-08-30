@@ -426,6 +426,7 @@ export class BackendGameService {
       firstRevealer: confirmedReveals[0]?.playerAddress,
       winner: refreshed.winner,
       winnerAddress: refreshed.winner === 'creator' ? request.creatorAddress : refreshed.winner === 'joiner' ? refreshed.join?.joinerAddress : null,
+      revealedPicks: Object.fromEntries(confirmedReveals.map((reveal) => [reveal.role, reveal.choice])),
       canReveal: ['joined', 'first_revealed'].includes(status),
       safetyAction: status === 'first_revealed' ? 'fallback_claim'
         : status === 'joined' || status === 'refund_partial' ? 'refund_player'

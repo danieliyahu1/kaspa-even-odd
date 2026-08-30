@@ -29,9 +29,9 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /api\/games\/prepare/);
   assert.doesNotMatch(browserSource, /one DAA confirmation/i);
   assert.match(browserSource, /Claim pot/);
-  assert.match(browserSource, /Match the /);
+  assert.match(browserSource, /Join for /);
   assert.match(browserSource, /data-reveal-number/);
-  assert.match(browserSource, /Wrong number/);
+  assert.match(browserSource, /That was the wrong number/);
   assert.match(browserSource, /INVALID_REVEAL/);
   assert.match(browserSource, /reveal-notice/);
   assert.doesNotMatch(browserSource, /showNotice\('#game-action'/);
@@ -39,9 +39,10 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /data-join-number/);
   assert.match(browserSource, /createRevealSecret\(number\)/);
   assert.doesNotMatch(browserSource, /createRevealSecret\(yourSide/);
-  assert.match(browserSource, /Guess even/);
+  assert.match(browserSource, /Even \/ Odd|Even\/Odd/);
+  assert.doesNotMatch(browserSource, /Guess even/i);
   assert.match(browserSource, /joinSection\(/);
-  assert.doesNotMatch(browserSource, /renderJoin\(|#join-card|Joining unavailable/);
+  assert.doesNotMatch(browserSource, /renderJoin\(|Joining unavailable/);
   assert.doesNotMatch(browserSource, /data-action="create"/);
   assert.doesNotMatch(browserSource, /Refund my stake|Refund unmatched game/);
   assert.doesNotMatch(browserSource, /covenant|UTXO|commitment preimage|Player A side|\bPrepare with backend\b|\bCommit vote\b/i);
