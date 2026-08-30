@@ -62,7 +62,8 @@ test('projects reveal states for the browser without choosing the winner', () =>
     fallbackDeadlineDaa: 4_001n,
   });
   assert.equal(revealActionView(resolveReveal({ game: { ...game, firstReveal: { player: 'creator', confirmedDaaScore: 2_000n } }, caller: 'creator', secret: creatorSecret })).state, 'waiting_for_other_player');
-  assert.equal(parityOutcome({ creatorChoice: 1, joinerChoice: 0, creatorEven: true }), 'creator');
+  assert.equal(parityOutcome({ creatorChoice: 1, joinerChoice: 0, creatorEven: true }), 'joiner');
+  assert.equal(parityOutcome({ creatorChoice: 1, joinerChoice: 0, creatorEven: false }), 'creator');
 });
 
 test('stores reveal secrets through the local storage boundary', async () => {

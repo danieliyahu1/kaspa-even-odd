@@ -13,7 +13,7 @@ const transactionId = 'c'.repeat(64);
 const request = prepareCreateGame({
   network: 'testnet-10',
   creatorAddress: 'kaspatest:creator',
-  creatorPublicKey: '07'.repeat(33),
+  creatorPublicKey: '07'.repeat(32),
   creatorCommitment: '09'.repeat(32),
   deadlineDaa: 500000000000n,
   side: 'odd',
@@ -87,7 +87,7 @@ test('creates, checkpoints, confirms, and exposes only the confirmed invite', as
     message: 'Game created. Waiting for Player B.',
     transactionId,
     gameId: transactionId,
-    inviteUrl: `https://example.test/join?v=EO%2Fv1&game=${transactionId}`,
+    inviteUrl: `https://example.test/join?v=EO%2Fv2&game=${transactionId}`,
   });
   assert.deepEqual(calls, { signed: 1, submitted: 1, confirmed: 1 });
   const saved = await store.load(createOperationKey(prepared));

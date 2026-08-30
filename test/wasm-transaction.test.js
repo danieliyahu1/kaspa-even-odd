@@ -18,7 +18,7 @@ const KASPA_WASM = join(VENDOR_DIR, 'kaspa_bg.wasm');
 const request = prepareCreateGame({
   network: 'testnet-10',
   creatorAddress: 'kaspatest:creator',
-  creatorPublicKey: '07'.repeat(33),
+  creatorPublicKey: '07'.repeat(32),
   creatorCommitment: '09'.repeat(32),
   deadlineDaa: 500000000000n,
   side: 'even',
@@ -83,7 +83,7 @@ test('WASM covenant address matches the pure-JS game instance oracle', () => {
   const prepared = createWasmGenesisSafeJson({ request, authorizingInput: 0, inputs: [fundingInput()] });
   const transaction = JSON.parse(prepared.txJson);
   const instance = deriveGameInstance({
-    creatorPubkey: new Array(33).fill(7),
+    creatorPubkey: new Array(32).fill(7),
     creatorCommit: new Array(32).fill(9),
     potSompi: request.stakeSompi,
     deadlineDaa: request.deadlineDaa,

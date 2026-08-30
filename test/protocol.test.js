@@ -10,7 +10,7 @@ import { createGenesisGameOutput } from '../src/genesis-transaction.js';
 const valid = {
   network: 'testnet-10',
   creatorAddress: 'kaspatest:creator',
-  creatorPublicKey: '07'.repeat(33),
+  creatorPublicKey: '07'.repeat(32),
   creatorCommitment: '09'.repeat(32),
   deadlineDaa: 500000000000n,
   side: 'even',
@@ -40,8 +40,8 @@ test('rejects wrong network and incomplete covenant state', () => {
 test('serializes and parses an invite with only version and game id', () => {
   const gameId = 'b'.repeat(64);
   const invite = serializeInvite({ gameId, origin: 'https://example.test/create' });
-  assert.equal(invite, `https://example.test/join?v=EO%2Fv1&game=${gameId}`);
-  assert.deepEqual(parseInvite(invite, 'https://example.test'), { protocolVersion: 'EO/v1', network: 'testnet-10', gameId });
+  assert.equal(invite, `https://example.test/join?v=EO%2Fv2&game=${gameId}`);
+  assert.deepEqual(parseInvite(invite, 'https://example.test'), { protocolVersion: 'EO/v2', network: 'testnet-10', gameId });
   assert.throws(() => parseInvite(`${invite}&secret=do-not-accept`, 'https://example.test'), { code: 'INVALID_INVITE' });
 });
 
