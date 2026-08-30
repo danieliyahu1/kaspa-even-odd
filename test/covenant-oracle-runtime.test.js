@@ -11,7 +11,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const ORACLE = join(__dirname, '..', 'oracle', 'target', 'release', 'covenant-oracle.exe');
 const ARTIFACT = join(__dirname, '..', 'covenant', 'even_odd.template.artifact.json');
 
-const creatorPubkeyHex = '07'.repeat(33);
+const creatorPubkeyHex = '07'.repeat(32);
 const creatorCommitHex = '09'.repeat(32);
 const potSompi = 100000000;
 const deadlineDaa = 500000000000;
@@ -66,7 +66,7 @@ test('real Rust covenant-oracle (pinned v2.0.1) yields the WASM-authoritative ge
 
   // The WASM SDK's populateGenesisCovenants binds this exact vector to
   // This vector is pinned by the current covenant artifact and JS derivation.
-  assert.equal(jsCovenantId, '8798cb8ff5f5a9ecb6ea34a0918228fbb97e8e156879268a8f38ff432170df85');
+  assert.equal(jsCovenantId, '84bc0e4633081a7fbb2d195213d7121e49545e294b06b67c2a03c0ce62a4b1b3');
 
   // Reference: the oracle prints its own covenant_id_vector using the
   // versioned SPK encoding; the JS/WASM reuse the SafeJSON versionless form,

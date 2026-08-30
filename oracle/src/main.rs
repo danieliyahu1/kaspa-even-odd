@@ -11,7 +11,7 @@ use kaspa_consensus_core::tx::{ScriptPublicKey, TransactionId, TransactionOutpoi
 use silverscript_abi::{ArtifactValue, SilAbiArtifact, encode_runtime_state_script};
 
 fn usage() -> ! {
-    eprintln!("usage: covenant-oracle <artifact.json> <creator_pubkey_hex(66)> <creator_commit_hex(64)> <pot_sompi> <deadline_daa>");
+    eprintln!("usage: covenant-oracle <artifact.json> <creator_pubkey_hex(64)> <creator_commit_hex(64)> <pot_sompi> <deadline_daa>");
     std::process::exit(2);
 }
 
@@ -30,7 +30,7 @@ fn main() -> ExitCode {
     };
     let creator_pk = match args.next() {
         Some(h) => match decode_hex(&h) {
-            Ok(b) if b.len() == 33 => b,
+            Ok(b) if b.len() == 32 => b,
             _ => usage(),
         },
         None => usage(),
