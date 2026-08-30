@@ -97,7 +97,7 @@ npm run check
 ```
 
 `silverscript/` is a pinned git submodule (upstream `kaspanet/silverscript` at
-`db9e1baf`). The `covenant-oracle-runtime` tests need its `silverscript-abi`
+`v1-rc1`). The `covenant-oracle-runtime` tests need its `silverscript-abi`
 crate, so initialize the submodule and build the standalone oracle before
 running them:
 
