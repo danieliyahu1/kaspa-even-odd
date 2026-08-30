@@ -69,14 +69,14 @@ secret, commitment preimage, wallet key, or transaction template.
 The canonical testnet covenant artifact is compiled by `silverc` 0.1.0 from
 `covenant/even_odd.sil` into `covenant/even_odd.template.artifact.json`:
 
-- **contract**: `EvenOdd`, template hash `49532e…f815`
+- **contract**: `EvenOdd`, template hash `8c8d50e0…98249`
 - **state span**: `offset 1, len 219` (11 fields: `creator_hash`,
   `joiner_hash`, `creator_commit`, `joiner_commit`, `pot`, `deadline_daa`,
   `creator_even`, `creator_choice`, `joiner_choice`, `first_revealer_hash`,
   `status`)
-- **dispatch tags**: `join = 51710335`, `refund = acb37330`
-- **terminal dispatch tags**: `reveal = d693d4f5`, `fallback_claim = e4d7e9ea`,
-  `refund_player = 28ba1e1d`
+- **dispatch tags**: `join = b1d2ce8f`, `refund = 762ffa55`
+- **terminal dispatch tags**: `reveal = be6bd383`, `fallback_claim = 786ae157`,
+  `refund_player = 7e21ac29`
 - **P2SH-256**: `0xaa 0x20 <blake2b-256(redeemScript)>`; address prefix
   `kaspatest`, version byte 8.
 - **reproducibility manifest**: `covenant/pins.json` pins the SilverScript source
@@ -112,18 +112,25 @@ The repository includes a production container and Kubernetes manifests under
 `deploy/`. The runtime process exposes Kubernetes probe endpoints only; the
 protocol implementation remains the module exported by `src/index.js`.
 
+`git push` to `main` is the deploy button. CI builds the `linux/arm64` image,
+smoke-tests the container against `/healthz`, pushes the immutable
+`sha-<commit>` tag to GHCR, and commits that tag back into
+`deploy/deployment.yaml` (`deploy: sha-<commit> [skip ci]`). Argo CD syncs the
+cluster to Git — `prune` + `selfHeal` keep Git authoritative — so the pod
+rolls to the new image automatically. CI never talks to Kubernetes and holds
+no cluster credential; there is no second deploy path.
+
+Local verification mirrors the CI gate:
+
 ```sh
 npm run check
 npm test
 docker build --platform linux/arm64 -t ghcr.io/danieliyahu1/kaspa-even-odd/kaspa-even-odd:sha-<git-sha> .
-kubectl apply -f deploy/namespace.yaml
-kubectl apply -f deploy/storage.yaml
-kubectl apply -f deploy/service.yaml
 ```
 
-The manifest is pinned to the immutable image published for the current
-release. When a new image is published, update the image line in
-`deploy/deployment.yaml` to the new full Git SHA before syncing Argo CD.
+`deploy/deployment.yaml` pins the immutable image for the current release; the
+image line is updated by CI, never by hand. Deleting a file under `deploy/`
+removes the corresponding object from the cluster (Argo prunes it).
 
 Runtime details:
 
