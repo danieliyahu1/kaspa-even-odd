@@ -8,6 +8,8 @@ pragma silverscript ^0.1.0;
 //   2 = first reveal confirmed
 //   3 = settled (pot paid to the winner)
 //   4 = fallback claim confirmed
+//   5 = creator refunded; joiner stake remains
+//   6 = joiner refunded; creator stake remains
 //
 // Lock flow (KEO-1): the creator funds a covenant output holding the exact
 // stake. Until a joiner matches, only `refund` may spend it, and only after the
@@ -38,42 +40,35 @@ contract EvenOdd(
     // Creator reclaims after the join deadline if no joiner matched.
     // Keeps locked stakes recoverable (KEO-1 safeguard; no game value is used
     // for fees).
-    entry refund(sig creator_sig, pubkey creator_pk) {
+    entry refund(pubkey creator_pk) {
         require(status == 0);
         require(blake2b(byte[](creator_pk)) == creator_hash);
-        require(checkSig(creator_sig, creator_pk));
+        byte[36] creator_spk = new ScriptPubKeyP2PK(creator_pk);
+        require(tx.inputs[1].scriptPubKey == byte[](creator_spk));
         require(tx.daa >= deadline_daa);
 
         // Exactly one payout: the creator gets the full pot back.
-        require(OpAuthOutputCount(this.activeInputIndex) == 1);
-        int out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-        require(tx.outputs[out_idx].value == pot);
-        // No covenant continuation: the output must not be back to this
-        // contract. A plain (non-covenant) output is guaranteed by the absence
-        // of a validated covenant binding; the receiving script is supplied by
-        // the spender and must match the creator's own scriptPubKey policy.
-        require(tx.outputs[out_idx].scriptPubKey != tx.inputs[this.activeInputIndex].scriptPubKey);
+        require(OpAuthOutputCount(this.activeInputIndex) == 0);
+        require(tx.outputs[0].value == pot);
+        require(tx.outputs[0].scriptPubKey == byte[](creator_spk));
     }
 
     // Joiner matches the stake and commits their hidden choice, advancing the
     // game to phase 1. The covenant output is rewritten keyed to `dh` preserved
     // state.
-    entry join(sig joiner_sig, pubkey joiner_pk, byte[32] new_joiner_commit) {
+    entry join(pubkey joiner_pk, byte[32] new_joiner_commit) {
         require(status == 0);
-        require(checkSig(joiner_sig, joiner_pk));
         byte[32] next_joiner_hash = blake2b(byte[](joiner_pk));
         require(next_joiner_hash != creator_hash);
+        byte[36] joiner_spk = new ScriptPubKeyP2PK(joiner_pk);
+        require(tx.inputs[1].scriptPubKey == byte[](joiner_spk));
 
-        // The joiner contributes a second covenant input of exactly one stake.
-        int in_count = OpCovInputCount(OpInputCovenantId(this.activeInputIndex));
-        require(in_count == 2);
-
-        // Both covenant inputs must carry exactly one stake.
-        int idx0 = OpCovInputIdx(OpInputCovenantId(this.activeInputIndex), 0);
-        int idx1 = OpCovInputIdx(OpInputCovenantId(this.activeInputIndex), 1);
+        // Player B contributes ordinary signed wallet inputs. The open game is
+        // the only input in this covenant domain.
+        byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(cov_id) == 1);
+        require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
         require(tx.inputs[this.activeInputIndex].value == pot);
-        require(tx.inputs[idx0].value == pot);
-        require(tx.inputs[idx1].value == pot);
 
         // One output continues this covenant with doubled pot.
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
@@ -94,10 +89,11 @@ contract EvenOdd(
         });
     }
 
-    entry reveal(sig player_sig, pubkey player_pk, int choice, byte[32] nonce) {
+    entry reveal(pubkey player_pk, int choice, byte[32] nonce, pubkey payout_pk) {
         require(status == 1 || status == 2);
         require(choice == 0 || choice == 1);
-        require(checkSig(player_sig, player_pk));
+        byte[36] player_spk = new ScriptPubKeyP2PK(player_pk);
+        require(tx.inputs[1].scriptPubKey == byte[](player_spk));
         byte[32] player_hash = blake2b(byte[](player_pk));
         require(player_hash == creator_hash || player_hash == joiner_hash);
 
@@ -108,6 +104,7 @@ contract EvenOdd(
         }
 
         if (status == 1) {
+            require(blake2b(byte[](payout_pk)) == player_hash);
             int next_creator_choice = creator_choice;
             int next_joiner_choice = joiner_choice;
             if (player_hash == creator_hash) {
@@ -142,28 +139,36 @@ contract EvenOdd(
                 final_joiner_choice = choice;
             }
             int winner_idx = 1;
-            if ((final_creator_choice + final_joiner_choice) % 2 == creator_even) {
+            if ((final_creator_choice + final_joiner_choice) % 2 != creator_even) {
                 winner_idx = 0;
             }
+            byte[32] winner_hash = joiner_hash;
+            if (winner_idx == 0) {
+                winner_hash = creator_hash;
+            }
+            require(blake2b(byte[](payout_pk)) == winner_hash);
+            byte[36] winner_spk = new ScriptPubKeyP2PK(payout_pk);
             require(tx.outputs[winner_idx].value == pot);
-            require(tx.outputs[winner_idx].scriptPubKey != tx.inputs[this.activeInputIndex].scriptPubKey);
+            require(tx.outputs[winner_idx].scriptPubKey == byte[](winner_spk));
         }
     }
 
-    entry fallback_claim(sig player_sig, pubkey player_pk) {
+    entry fallback_claim(pubkey player_pk) {
         require(status == 2);
         require(this.ageDaa >= 3000);
-        require(checkSig(player_sig, player_pk));
+        byte[36] player_spk = new ScriptPubKeyP2PK(player_pk);
+        require(tx.inputs[1].scriptPubKey == byte[](player_spk));
         require(blake2b(byte[](player_pk)) == first_revealer_hash);
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
         require(tx.outputs[0].value == pot);
-        require(tx.outputs[0].scriptPubKey != tx.inputs[this.activeInputIndex].scriptPubKey);
+        require(tx.outputs[0].scriptPubKey == byte[](player_spk));
     }
 
-    entry refund_player(sig player_sig, pubkey player_pk) {
+    entry refund_player(pubkey player_pk) {
         require(status == 1 || status == 5 || status == 6);
         require(this.ageDaa >= 3000);
-        require(checkSig(player_sig, player_pk));
+        byte[36] player_spk = new ScriptPubKeyP2PK(player_pk);
+        require(tx.inputs[1].scriptPubKey == byte[](player_spk));
         byte[32] player_hash = blake2b(byte[](player_pk));
         require(player_hash == creator_hash || player_hash == joiner_hash);
 
@@ -199,7 +204,7 @@ contract EvenOdd(
             });
             require(tx.outputs[0].value == pot / 2);
         }
-        require(tx.outputs[0].scriptPubKey != tx.inputs[this.activeInputIndex].scriptPubKey);
+        require(tx.outputs[0].scriptPubKey == byte[](player_spk));
     }
 
 }

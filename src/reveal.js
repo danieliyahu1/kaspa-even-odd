@@ -98,7 +98,7 @@ export function verifyRevealPreimage({ commitment, choice, nonce, nonceHex }) {
 export function parityOutcome({ creatorChoice, joinerChoice, creatorEven }) {
   const creator = normalizeChoice(creatorChoice);
   const joiner = normalizeChoice(joinerChoice);
-  return (creator + joiner) % 2 === (creatorEven ? 1 : 0) ? 'creator' : 'joiner';
+  return (creator + joiner) % 2 === (creatorEven ? 0 : 1) ? 'creator' : 'joiner';
 }
 
 export function resolveReveal({ game, caller, secret, currentDaaScore }) {

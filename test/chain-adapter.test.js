@@ -8,9 +8,9 @@ const STAKE_KAS = 5;
 const request = prepareCreateGame({
   network: 'testnet-10',
   creatorAddress: 'kaspatest:creator',
-  creatorPublicKey: '07'.repeat(33),
+  creatorPublicKey: '07'.repeat(32),
   creatorCommitment: '09'.repeat(32),
-  deadlineDaa: 500000000000n,
+  deadlineDaa: 500000000n,
   side: 'odd',
   stakeKas: STAKE_KAS,
   feeSompi: 0n,

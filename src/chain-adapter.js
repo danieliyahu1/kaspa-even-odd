@@ -129,6 +129,7 @@ export class KaspaChainAdapter {
       change: request.change,
       signature: request.signature,
       publicKey: request.publicKey,
+      payoutPublicKey: request.payoutPublicKey,
     });
     const txJson = serializeTerminalTransaction(prepared);
     return Object.freeze({

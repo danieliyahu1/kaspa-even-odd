@@ -30,6 +30,13 @@ spec:
           env:
             - name: PORT
               value: "3000"
+            - name: KASPA_NETWORK
+              value: "testnet-10"
+            - name: GAME_STORE_PATH
+              value: /var/lib/kaspa-even-odd/games.json
+          volumeMounts:
+            - name: game-state
+              mountPath: /var/lib/kaspa-even-odd
           readinessProbe:
             httpGet:
               path: /readyz
@@ -54,3 +61,7 @@ spec:
               drop:
                 - ALL
             readOnlyRootFilesystem: true
+      volumes:
+        - name: game-state
+          persistentVolumeClaim:
+            claimName: kaspa-even-odd-state

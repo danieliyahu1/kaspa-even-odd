@@ -1,4 +1,4 @@
-export const PROTOCOL_VERSION = 'EO/v1';
+export const PROTOCOL_VERSION = 'EO/v2';
 export const NETWORK = 'testnet-10';
 export const MIN_STAKE_KAS = 1;
 export const MAX_STAKE_KAS = 100;

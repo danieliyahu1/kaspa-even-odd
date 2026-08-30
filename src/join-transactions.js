@@ -7,14 +7,15 @@ export function prepareJoinTransaction({ game, joinerPublicKey, joinerCommitment
   if (typeof continuationScriptPublicKey !== 'string' || continuationScriptPublicKey.length === 0 || !continuationCovenant) {
     throw invalid('Joined covenant continuation is required');
   }
-  const publicKey = bytes(joinerPublicKey, 33, 'joiner public key');
+  const publicKey = bytes(joinerPublicKey, 32, 'joiner public key');
   const commitment = bytes(joinerCommitment, 32, 'joiner commitment');
   const pot = positive(game.potSompi, 'game stake');
   if (typeof feeSompi !== 'bigint' || feeSompi < 0n) throw new ProtocolError('INVALID_FEE', 'Fee must be a non-negative sompi amount');
 
   const input = normalizeInput({ ...gameInput, amount: pot, covenantId: gameInput.covenantId ?? game.currentCovenantId }, buildKccEntrySignatureScript({
     entry: 'join',
-    args: [new Uint8Array(65), publicKey, commitment],
+    args: [publicKey, commitment],
+    redeemScript: game.currentRedeemScript,
   }));
   if (!input.utxo.covenantId) throw invalid('Current game input must carry its covenant ID');
   const ordinary = feeInputs.map((entry) => {
@@ -52,7 +53,16 @@ export function serializeJoinTransaction(prepared, wasm = loadWasmSdk()) {
 }
 
 export function verifySignedJoinTransaction({ preparedTxJson, signedTxJson }) {
-  return verifyWasmSignedSafeJson({ preparedTxJson, signedTxJson, policy: {} });
+  verifyWasmSignedSafeJson({ preparedTxJson, signedTxJson, policy: {} });
+  const prepared = JSON.parse(preparedTxJson);
+  const signed = JSON.parse(signedTxJson);
+  if (signed.inputs[0]?.signatureScript !== prepared.inputs[0]?.signatureScript) {
+    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Kastle changed the covenant invocation');
+  }
+  if (signed.inputs.slice(1).some((input) => typeof input.signatureScript !== 'string' || input.signatureScript.length === 0)) {
+    throw new ProtocolError('SIGNING_FAILED', 'Kastle did not sign every Player B funding input');
+  }
+  return signedTxJson;
 }
 
 function normalizeInput(entry, signatureScript) {

@@ -12,6 +12,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev && npm cache clean --force
 COPY --from=test /app/src ./src
+COPY --from=test /app/public ./public
 COPY --from=test /app/covenant ./covenant
 COPY --from=test /app/vendor ./vendor
 USER node

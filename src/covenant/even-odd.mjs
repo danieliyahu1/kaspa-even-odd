@@ -110,8 +110,10 @@ export function verifyTemplateHash(template = EVEN_ODD_TEMPLATE) {
 
 function buildStateScript(game) {
   // state field order/enabling per the pinned runtime_state.
-  const creatorPubkey = normalizeBytes(game.creatorPubkey, 33, 'creatorPubkey');
+  const creatorPubkey = normalizeBytes(game.creatorPubkey, 32, 'creatorPubkey');
   const creatorCommit = normalizeBytes(game.creatorCommit, 32, 'creatorCommit');
+  const joinerPubkey = game.joinerPubkey === undefined ? null : normalizeBytes(game.joinerPubkey, 32, 'joinerPubkey');
+  const joinerCommit = game.joinerCommit === undefined ? ZERO32 : normalizeBytes(game.joinerCommit, 32, 'joinerCommit');
   if (typeof game.potSompi !== 'bigint' || game.potSompi <= 0n) {
     throw new ProtocolError('INVALID_STATE', 'potSompi must be a positive bigint');
   }
@@ -119,18 +121,22 @@ function buildStateScript(game) {
     throw new ProtocolError('INVALID_STATE', 'deadlineDaa must be a positive bigint');
   }
   const creatorHash = blake2b256(creatorPubkey);
+  const status = BigInt(game.status ?? 0);
+  const creatorChoice = BigInt(game.creatorChoice ?? 0);
+  const joinerChoice = BigInt(game.joinerChoice ?? 0);
+  const firstRevealerHash = game.firstRevealerHash === undefined ? ZERO32 : normalizeBytes(game.firstRevealerHash, 32, 'firstRevealerHash');
   const parts = [
     pushData(creatorHash),      // creator_hash
-    pushData(ZERO32),           // joiner_hash = zeroes at genesis
+    pushData(joinerPubkey ? blake2b256(joinerPubkey) : ZERO32),
     pushData(creatorCommit),    // creator_commit
-    pushData(ZERO32),           // joiner_commit = zeroes at genesis
+    pushData(joinerCommit),
     pushData(encodeI64Fixed(game.potSompi)),       // pot
     pushData(encodeI64Fixed(game.deadlineDaa)),    // deadline_daa
     pushData(encodeI64Fixed(game.creatorEven ? 1n : 0n)), // creator_even
-    pushData(encodeI64Fixed(0n)), // creator_choice
-    pushData(encodeI64Fixed(0n)), // joiner_choice
-    pushData(ZERO32), // first_revealer_hash
-    pushData(encodeI64Fixed(0n)), // status = 8-byte int 0 (waiting for joiner)
+    pushData(encodeI64Fixed(creatorChoice)),
+    pushData(encodeI64Fixed(joinerChoice)),
+    pushData(firstRevealerHash),
+    pushData(encodeI64Fixed(status)),
   ];
   const total = parts.reduce((n, p) => n + p.length, 0);
   const script = new Uint8Array(total);

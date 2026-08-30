@@ -3,8 +3,7 @@ use std::fs;
 
 use blake2b_simd::Params;
 use kaspa_consensus_core::Hash;
-use kaspa_consensus_core::hashing::sighash::{SigHashReusedValuesUnsync, calc_schnorr_signature_hash};
-use kaspa_consensus_core::hashing::sighash_type::SIG_HASH_ALL;
+use kaspa_consensus_core::hashing::sighash::SigHashReusedValuesUnsync;
 use kaspa_consensus_core::mass::units::SigopCount;
 use kaspa_consensus_core::subnets::SUBNETWORK_ID_NATIVE;
 use kaspa_consensus_core::tx::{CovenantBinding, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionInput, TransactionOutpoint, TransactionOutput, UtxoEntry, VerifiableTransaction};
@@ -12,17 +11,52 @@ use kaspa_txscript::caches::Cache;
 use kaspa_txscript::covenants::CovenantsContext;
 use kaspa_txscript::{EngineCtx, EngineFlags, TxScriptEngine, pay_to_script_hash_script, pay_to_script_hash_signature_script_with_flags};
 use kaspa_txscript_errors::TxScriptError;
-use secp256k1::{Keypair, Message, Secp256k1, SecretKey};
+use secp256k1::{Keypair, Secp256k1, SecretKey};
 use silverscript_abi::{ArtifactValue, SilAbiArtifact, encode_contract_entry_sig_script, encode_runtime_state_script};
 
 const POT: u64 = 200_000_000;
 const STAKE: u64 = 100_000_000;
-const DEADLINE_DAA: u64 = 500_000_000_000;
+const DEADLINE_DAA: u64 = 500_000_000;
 
 struct Player {
-    keypair: Keypair,
     pubkey: Vec<u8>,
     hash: Vec<u8>,
+}
+
+#[test]
+fn vm_accepts_join_with_one_game_input_and_ordinary_funding() {
+    let artifact = artifact();
+    let creator = player(1);
+    let joiner = player(2);
+    let creator_commit = vec![9; 32];
+    let joiner_commit = vec![8; 32];
+    let open = open_game_state(&artifact, &creator, &creator_commit);
+    let joined = game_state_with_commits(&artifact, 1, &creator, &joiner, 0, 0, &[], &creator_commit, &joiner_commit, POT);
+    let open_script = instance_script(&artifact, &open);
+    let joined_script = instance_script(&artifact, &joined);
+    let covenant_id = Hash::from_bytes([0x33; 32]);
+    let invocation = entry_sigscript(&artifact, "join", vec![ArtifactValue::Bytes(joiner.pubkey.clone()), ArtifactValue::Bytes(joiner_commit)], &open_script);
+    let entries = vec![
+        UtxoEntry::new(STAKE, pay_to_script_hash_script(&open_script), DEADLINE_DAA, false, Some(covenant_id)),
+        UtxoEntry::new(STAKE + 1_000_000, player_script(&joiner), DEADLINE_DAA, false, None),
+    ];
+    let output = TransactionOutput {
+        value: POT,
+        script_public_key: pay_to_script_hash_script(&joined_script),
+        covenant: Some(CovenantBinding { authorizing_input: 0, covenant_id }),
+    };
+    let tx = Transaction::new(1, vec![tx_input(0, invocation), tx_input(1, vec![])], vec![output], 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
+    let result = execute_input(tx, entries, 0);
+    assert!(result.is_ok(), "join should pass: {:?}", result.err());
+}
+
+#[test]
+fn vm_accepts_creator_refund_only_after_the_join_deadline() {
+    let artifact = artifact();
+    let creator = player(1);
+    let open = open_game_state(&artifact, &creator, &vec![9; 32]);
+    assert_creator_refund(&artifact, &open, &creator, DEADLINE_DAA, true);
+    assert_creator_refund(&artifact, &open, &creator, DEADLINE_DAA - 1, false);
 }
 
 #[test]
@@ -65,10 +99,10 @@ fn vm_accepts_normal_reveals_and_rejects_invalid_reveals() {
     let joined = game_state_with_commits(&artifact, 1, &creator, &joiner, 0, 0, &[], &commitment(1, &creator_nonce), &commitment(0, &joiner_nonce), POT);
     let after_creator_reveal = game_state_with_commits(&artifact, 2, &creator, &joiner, 1, 0, &creator.hash, &commitment(1, &creator_nonce), &commitment(0, &joiner_nonce), POT);
 
-    assert_reveal_spend(&artifact, &joined, &creator, 1, &creator_nonce, Some(&after_creator_reveal), vec![], true);
-    assert_reveal_spend(&artifact, &joined, &creator, 0, &creator_nonce, Some(&after_creator_reveal), vec![], false);
-    assert_reveal_spend(&artifact, &game_state(&artifact, 0, &creator, &joiner, 0, 0, &[]), &creator, 1, &creator_nonce, None, vec![], false);
-    assert_reveal_spend(&artifact, &after_creator_reveal, &creator, 1, &creator_nonce, None, vec![], false);
+    assert_reveal_spend(&artifact, &joined, &creator, 1, &creator_nonce, &creator, Some(&after_creator_reveal), vec![], true);
+    assert_reveal_spend(&artifact, &joined, &creator, 0, &creator_nonce, &creator, Some(&after_creator_reveal), vec![], false);
+    assert_reveal_spend(&artifact, &game_state(&artifact, 0, &creator, &joiner, 0, 0, &[]), &creator, 1, &creator_nonce, &creator, None, vec![], false);
+    assert_reveal_spend(&artifact, &after_creator_reveal, &creator, 1, &creator_nonce, &creator, None, vec![], false);
 
     assert_reveal_spend(
         &artifact,
@@ -76,12 +110,13 @@ fn vm_accepts_normal_reveals_and_rejects_invalid_reveals() {
         &joiner,
         0,
         &joiner_nonce,
+        &joiner,
         None,
         vec![
             TransactionOutput { value: POT, script_public_key: ScriptPublicKey::new(0, vec![0x51].into()), covenant: None },
             TransactionOutput { value: STAKE, script_public_key: ScriptPublicKey::new(0, vec![0x52].into()), covenant: None },
         ],
-        true,
+        false,
     );
     assert_reveal_spend(
         &artifact,
@@ -89,20 +124,41 @@ fn vm_accepts_normal_reveals_and_rejects_invalid_reveals() {
         &joiner,
         0,
         &joiner_nonce,
+        &joiner,
         None,
         vec![
             TransactionOutput { value: STAKE, script_public_key: ScriptPublicKey::new(0, vec![0x51].into()), covenant: None },
-            TransactionOutput { value: POT, script_public_key: ScriptPublicKey::new(0, vec![0x52].into()), covenant: None },
+            TransactionOutput { value: POT, script_public_key: player_script(&joiner), covenant: None },
         ],
-        false,
+        true,
+    );
+
+    let even_joiner_nonce = vec![10; 32];
+    let even_after_creator = game_state_with_commits(&artifact, 2, &creator, &joiner, 1, 0, &creator.hash, &commitment(1, &creator_nonce), &commitment(1, &even_joiner_nonce), POT);
+    assert_reveal_spend(
+        &artifact,
+        &even_after_creator,
+        &joiner,
+        1,
+        &even_joiner_nonce,
+        &creator,
+        None,
+        vec![
+            TransactionOutput { value: POT, script_public_key: player_script(&creator), covenant: None },
+            TransactionOutput { value: STAKE, script_public_key: player_script(&joiner), covenant: None },
+        ],
+        true,
     );
 }
 
-fn assert_reveal_spend(artifact: &SilAbiArtifact, state_script: &[u8], player: &Player, choice: i64, nonce: &[u8], continuation_state: Option<&[u8]>, outputs: Vec<TransactionOutput>, should_pass: bool) {
+fn assert_reveal_spend(artifact: &SilAbiArtifact, state_script: &[u8], player: &Player, choice: i64, nonce: &[u8], payout_player: &Player, continuation_state: Option<&[u8]>, outputs: Vec<TransactionOutput>, should_pass: bool) {
     let script = instance_script(artifact, state_script);
     let covenant_id = Hash::from_bytes([0x33; 32]);
-    let placeholder = entry_sigscript(artifact, "reveal", vec![ArtifactValue::Bytes(vec![0; 65]), ArtifactValue::Bytes(player.pubkey.clone()), ArtifactValue::Int(choice), ArtifactValue::Bytes(nonce.to_vec())], &script);
-    let entries = vec![UtxoEntry::new(POT, pay_to_script_hash_script(&script), DEADLINE_DAA, false, Some(covenant_id))];
+    let invocation = entry_sigscript(artifact, "reveal", vec![ArtifactValue::Bytes(player.pubkey.clone()), ArtifactValue::Int(choice), ArtifactValue::Bytes(nonce.to_vec()), ArtifactValue::Bytes(payout_player.pubkey.clone())], &script);
+    let entries = vec![
+        UtxoEntry::new(POT, pay_to_script_hash_script(&script), DEADLINE_DAA, false, Some(covenant_id)),
+        UtxoEntry::new(1_000_000, player_script(player), DEADLINE_DAA, false, None),
+    ];
     let tx_outputs = if let Some(next_state) = continuation_state {
         let next_script = instance_script(artifact, next_state);
         vec![TransactionOutput {
@@ -113,9 +169,7 @@ fn assert_reveal_spend(artifact: &SilAbiArtifact, state_script: &[u8], player: &
     } else {
         outputs
     };
-    let mut tx = Transaction::new(1, vec![tx_input(0, placeholder)], tx_outputs, 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
-    let sig = sign_tx_input(&tx, &entries, 0, player);
-    tx.inputs[0].signature_script = entry_sigscript(artifact, "reveal", vec![ArtifactValue::Bytes(sig), ArtifactValue::Bytes(player.pubkey.clone()), ArtifactValue::Int(choice), ArtifactValue::Bytes(nonce.to_vec())], &script);
+    let tx = Transaction::new(1, vec![tx_input(0, invocation), tx_input(1, vec![])], tx_outputs, 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
     let result = execute_input(tx, entries, 0);
     if should_pass {
         assert!(result.is_ok(), "reveal should pass: {:?}", result.err());
@@ -124,9 +178,31 @@ fn assert_reveal_spend(artifact: &SilAbiArtifact, state_script: &[u8], player: &
     }
 }
 
+fn assert_creator_refund(artifact: &SilAbiArtifact, state_script: &[u8], creator: &Player, daa: u64, should_pass: bool) {
+    let script = instance_script(artifact, state_script);
+    let covenant_id = Hash::from_bytes([0x33; 32]);
+    let invocation = entry_sigscript(artifact, "refund", vec![ArtifactValue::Bytes(creator.pubkey.clone())], &script);
+    let entries = vec![
+        UtxoEntry::new(STAKE, pay_to_script_hash_script(&script), DEADLINE_DAA - 1, false, Some(covenant_id)),
+        UtxoEntry::new(1_000_000, player_script(creator), DEADLINE_DAA - 1, false, None),
+    ];
+    let output = TransactionOutput {
+        value: STAKE,
+        script_public_key: player_script(creator),
+        covenant: None,
+    };
+    let tx = Transaction::new(1, vec![tx_input(0, invocation), tx_input(1, vec![])], vec![output], daa, SUBNETWORK_ID_NATIVE, 0, vec![]);
+    let result = execute_input(tx, entries, 0);
+    if should_pass {
+        assert!(result.is_ok(), "creator refund should pass: {:?}", result.err());
+    } else {
+        assert!(matches!(result, Err(TxScriptError::VerifyError | TxScriptError::EvalFalse | TxScriptError::UnsatisfiedLockTime(_))), "creator refund should fail by VM verify/eval false: {result:?}");
+    }
+}
+
 fn assert_refund_spend(artifact: &SilAbiArtifact, state_script: &[u8], player: &Player, payout: u64, daa: u64, continuation_state: Option<&[u8]>, should_pass: bool) {
     assert_spend_with_outputs(artifact, state_script, "refund_player", player, daa, should_pass, |script, covenant_id| {
-        let mut outputs = vec![TransactionOutput { value: payout, script_public_key: ScriptPublicKey::new(0, vec![0x51].into()), covenant: None }];
+        let mut outputs = vec![TransactionOutput { value: payout, script_public_key: player_script(player), covenant: None }];
         if let Some(next_state) = continuation_state {
             let next_script = instance_script(artifact, next_state);
             outputs.push(TransactionOutput {
@@ -142,7 +218,7 @@ fn assert_refund_spend(artifact: &SilAbiArtifact, state_script: &[u8], player: &
 
 fn assert_spend(artifact: &SilAbiArtifact, state_script: &[u8], entry: &str, player: &Player, payout: u64, daa: u64, should_pass: bool) {
     assert_spend_with_outputs(artifact, state_script, entry, player, daa, should_pass, |_script, _covenant_id| {
-        vec![TransactionOutput { value: payout, script_public_key: ScriptPublicKey::new(0, vec![0x51].into()), covenant: None }]
+        vec![TransactionOutput { value: payout, script_public_key: player_script(player), covenant: None }]
     });
 }
 
@@ -152,15 +228,16 @@ where
 {
     let script = instance_script(artifact, state_script);
     let covenant_id = Hash::from_bytes([0x33; 32]);
-    let placeholder = entry_sigscript(artifact, entry, vec![ArtifactValue::Bytes(vec![0; 65]), ArtifactValue::Bytes(player.pubkey.clone())], &script);
-    let entries = vec![UtxoEntry::new(POT, pay_to_script_hash_script(&script), DEADLINE_DAA, false, Some(covenant_id))];
+    let invocation = entry_sigscript(artifact, entry, vec![ArtifactValue::Bytes(player.pubkey.clone())], &script);
+    let entries = vec![
+        UtxoEntry::new(POT, pay_to_script_hash_script(&script), DEADLINE_DAA, false, Some(covenant_id)),
+        UtxoEntry::new(1_000_000, player_script(player), DEADLINE_DAA, false, None),
+    ];
     let outputs = build_outputs(&script, covenant_id);
     let age_daa = daa.checked_sub(DEADLINE_DAA).expect("test daa is after input daa");
-    let mut input = tx_input(0, placeholder);
+    let mut input = tx_input(0, invocation);
     input.sequence = age_daa;
-    let mut tx = Transaction::new(1, vec![input], outputs, 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
-    let sig = sign_tx_input(&tx, &entries, 0, player);
-    tx.inputs[0].signature_script = entry_sigscript(artifact, entry, vec![ArtifactValue::Bytes(sig), ArtifactValue::Bytes(player.pubkey.clone())], &script);
+    let tx = Transaction::new(1, vec![input, tx_input(1, vec![])], outputs, 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
     let result = execute_input(tx, entries, 0);
     if should_pass {
         assert!(result.is_ok(), "{entry} should pass: {:?}", result.err());
@@ -201,11 +278,35 @@ fn game_state_with_commits(artifact: &SilAbiArtifact, status: i64, creator: &Pla
     encode_runtime_state_script(artifact, &contract.runtime_state, &values).expect("state encodes")
 }
 
+fn open_game_state(artifact: &SilAbiArtifact, creator: &Player, creator_commit: &[u8]) -> Vec<u8> {
+    let contract = artifact.contract("EvenOdd").expect("EvenOdd contract");
+    let mut values = BTreeMap::new();
+    values.insert("creator_hash".into(), ArtifactValue::Bytes(creator.hash.clone()));
+    values.insert("joiner_hash".into(), ArtifactValue::Bytes(vec![0; 32]));
+    values.insert("creator_commit".into(), ArtifactValue::Bytes(creator_commit.to_vec()));
+    values.insert("joiner_commit".into(), ArtifactValue::Bytes(vec![0; 32]));
+    values.insert("pot".into(), ArtifactValue::Int(STAKE as i64));
+    values.insert("deadline_daa".into(), ArtifactValue::Int(DEADLINE_DAA as i64));
+    values.insert("creator_even".into(), ArtifactValue::Int(1));
+    values.insert("creator_choice".into(), ArtifactValue::Int(0));
+    values.insert("joiner_choice".into(), ArtifactValue::Int(0));
+    values.insert("first_revealer_hash".into(), ArtifactValue::Bytes(vec![0; 32]));
+    values.insert("status".into(), ArtifactValue::Int(0));
+    encode_runtime_state_script(artifact, &contract.runtime_state, &values).expect("state encodes")
+}
+
 fn commitment(choice: i64, nonce: &[u8]) -> Vec<u8> {
     let mut preimage = Vec::new();
     preimage.extend_from_slice(&choice.to_le_bytes());
     preimage.extend_from_slice(nonce);
     blake2b256(&preimage).to_vec()
+}
+
+fn player_script(player: &Player) -> ScriptPublicKey {
+    let mut script = vec![0x20];
+    script.extend_from_slice(&player.pubkey);
+    script.push(0xac);
+    ScriptPublicKey::new(0, script.into())
 }
 
 fn instance_script(artifact: &SilAbiArtifact, state_script: &[u8]) -> Vec<u8> {
@@ -233,18 +334,6 @@ fn tx_input(index: u32, signature_script: Vec<u8>) -> TransactionInput {
     }
 }
 
-fn sign_tx_input(tx: &Transaction, entries: &[UtxoEntry], input_idx: usize, player: &Player) -> Vec<u8> {
-    let reused_values = SigHashReusedValuesUnsync::new();
-    let populated = PopulatedTransaction::new(tx, entries.to_vec());
-    let sig_hash = calc_schnorr_signature_hash(&populated, input_idx, SIG_HASH_ALL, &reused_values);
-    let msg = Message::from_digest_slice(sig_hash.as_bytes().as_slice()).expect("valid sighash");
-    let sig = player.keypair.sign_schnorr(msg);
-    let mut out = Vec::new();
-    out.extend_from_slice(sig.as_ref());
-    out.push(SIG_HASH_ALL.to_u8());
-    out
-}
-
 fn execute_input(tx: Transaction, entries: Vec<UtxoEntry>, input_idx: usize) -> Result<(), TxScriptError> {
     let reused_values = SigHashReusedValuesUnsync::new();
     let sig_cache = Cache::new(10_000);
@@ -269,7 +358,7 @@ fn player(seed: u8) -> Player {
     let (xonly, _) = keypair.x_only_public_key();
     let pubkey = xonly.serialize().to_vec();
     let hash = blake2b256(&pubkey).to_vec();
-    Player { keypair, pubkey, hash }
+    Player { pubkey, hash }
 }
 
 fn blake2b256(data: &[u8]) -> [u8; 32] {

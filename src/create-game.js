@@ -27,7 +27,7 @@ export function prepareCreateGame({
   validateSide(side);
   const stakeSompi = stakeToSompi(stakeKas);
   validateFeeSeparation({ gameValue: stakeSompi, feeValue: feeSompi });
-  const publicKey = normalizeHex(creatorPublicKey, 33, 'creator public key');
+  const publicKey = normalizePublicKey(creatorPublicKey, 'creator public key');
   const commitment = normalizeHex(creatorCommitment, 32, 'creator commitment');
   const deadline = normalizePositiveBigInt(deadlineDaa, 'deadline DAA score');
     const covenant = deriveGameInstance({
@@ -38,7 +38,7 @@ export function prepareCreateGame({
      creatorEven: side === 'even',
   });
   return Object.freeze({
-    protocolVersion: 'EO/v1',
+    protocolVersion: 'EO/v2',
     network: NETWORK,
     creatorAddress,
     side,
@@ -53,6 +53,16 @@ export function prepareCreateGame({
     covenantScriptPublicKey: covenant.p2shScript.toString('hex'),
     covenantRedeemScript: covenant.redeemScript.toString('hex'),
   });
+}
+
+export function normalizePublicKey(value, name = 'public key') {
+  if (typeof value !== 'string' || !/^[0-9a-f]+$/i.test(value)) {
+    throw new ProtocolError('INVALID_GAME_STATE', `${name} must be a hexadecimal x-only public key`);
+  }
+  const normalized = value.toLowerCase();
+  if (normalized.length === 64) return normalized;
+  if (normalized.length === 66 && /^(02|03)/.test(normalized)) return normalized.slice(2);
+  throw new ProtocolError('INVALID_GAME_STATE', `${name} must be a 32-byte x-only or compressed public key`);
 }
 
 export async function createAndConfirmGame({ request, wallet, chain, inviteOrigin, store }) {

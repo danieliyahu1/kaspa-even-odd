@@ -46,6 +46,11 @@ secret, commitment preimage, wallet key, or transaction template.
 - `src/recovery.js` reconstructs game state from accepted chain history with a
   one-confirmation buffer, invalidates removed-block checkpoints, classifies
   external transactions, and provides memory and durable JSON recovery stores.
+- `src/backend-game-service.js` exposes the browser boundary for live creation:
+  it derives deadlines from testnet-10 DAA state, prepares from live UTXOs and
+  fees, verifies Kastle SafeJSON, submits over wRPC, and checks confirmation.
+- `src/backend-game-store.js` persists non-secret preparation and game metadata
+  on disk. The browser does not create identities or simulate game state.
 - `src/wasm-transaction.js` loads the pinned WASM SDK (`Transaction`,
   `GenesisCovenantGroup`, `populateGenesisCovenants`, `serializeToSafeJSON`)
   and rejects any Kastle mutation of sighash-relevant fields.
@@ -112,6 +117,7 @@ npm run check
 npm test
 docker build --platform linux/arm64 -t ghcr.io/danieliyahu1/kaspa-even-odd/kaspa-even-odd:sha-<git-sha> .
 kubectl apply -f deploy/namespace.yaml
+kubectl apply -f deploy/storage.yaml
 kubectl apply -f deploy/service.yaml
 ```
 
@@ -126,5 +132,7 @@ Runtime details:
 - Readiness endpoint: `/readyz`
 - Liveness endpoint: `/healthz`
 - Required runtime secrets: none
-- Required persistent storage: none for the stateless runtime; configure a
-  durable `JsonRecoveryStore` when recovery must survive process restarts.
+- Required network: `KASPA_NETWORK=testnet-10` (the process fails closed for
+  any other value); `KASPA_WRPC_URL` can pin a testnet-10 wRPC node.
+- Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
+  `/var/lib/kaspa-even-odd` stores non-secret backend game metadata.

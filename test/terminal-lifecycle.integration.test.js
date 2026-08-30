@@ -18,6 +18,8 @@ const game = {
   stakeSompi: 100_000_000n,
   potSompi: 200_000_000n,
   joinedDaaScore: 1_000n,
+  creatorAddress: 'creator',
+  joinerAddress: 'joiner',
   participants: { creator: { scriptPublicKey: '000051', commitment: creatorSecret.commitment }, joiner: { scriptPublicKey: '000052', commitment: joinerSecret.commitment } },
   commitments: { creator: creatorSecret.commitment, joiner: joinerSecret.commitment },
 };
@@ -49,7 +51,7 @@ test('runs a refund from authoritative state through sign, submit, and confirmat
   };
   const result = await createAndConfirmTerminalAction({
     action: 'individual_refund', request, chain,
-    wallet: { sign: async ({ txJson }) => { calls.sign += 1; const tx = JSON.parse(txJson); tx.inputs[0].signatureScript = '01aa'; return JSON.stringify(tx); } },
+    wallet: { sign: async ({ txJson }) => { calls.sign += 1; const tx = JSON.parse(txJson); tx.inputs[1].signatureScript = '01aa'; return JSON.stringify(tx); } },
     store: new MemoryTerminalStore(),
   });
   assert.deepEqual(result, { status: 'confirmed', transactionId: 'cc'.repeat(32), message: 'Your refund is confirmed.' });
@@ -65,14 +67,14 @@ test('returns pending status and checkpoints without claiming confirmation', asy
     submitTerminal: async () => 'dd'.repeat(32),
     confirmTerminal: async () => ({ status: 'observed' }),
   };
-  const result = await createAndConfirmTerminalAction({ action: 'individual_refund', request, chain, wallet: { sign: async ({ txJson }) => txJson }, store });
+  const result = await createAndConfirmTerminalAction({ action: 'individual_refund', request, chain, wallet: { sign: async ({ txJson }) => { const tx = JSON.parse(txJson); tx.inputs[1].signatureScript = '01aa'; return JSON.stringify(tx); } }, store });
   assert.equal(result.status, 'observed');
   assert.equal(result.message, 'Transaction status is pending confirmation.');
   assert.equal((await store.load(terminalOperationKey({ action: 'individual_refund', request, prepared: { preparedHash: 'ab'.repeat(32) } }))).transactionId, 'dd'.repeat(32));
 });
 
 test('runs a normal second reveal through mocked wallet and chain settlement', async () => {
-  const revealGame = { ...game, firstReveal: { player: 'creator', confirmedDaaScore: 2_000n }, reveals: { creator: true }, creatorChoice: 1, creatorEven: true };
+  const revealGame = { ...game, firstReveal: { player: 'creator', confirmedDaaScore: 2_000n }, reveals: { creator: true }, creatorChoice: 1, creatorEven: false };
   const revealRequest = {
     ...request,
     caller: 'joiner',
@@ -80,6 +82,7 @@ test('runs a normal second reveal through mocked wallet and chain settlement', a
     secret: joinerSecret,
     recipientScriptPublicKey: '000051',
     publicKey: new Uint8Array(32).fill(8),
+    payoutPublicKey: new Uint8Array(32).fill(7),
     change: { value: 999_000n, scriptPublicKey: '000052' },
   };
   const base = prepareRevealTransaction({ ...revealRequest, game: revealGame });
@@ -93,7 +96,7 @@ test('runs a normal second reveal through mocked wallet and chain settlement', a
     action: 'reveal',
     request: revealRequest,
     chain,
-    wallet: { sign: async ({ txJson, action }) => { assert.equal(action, 'reveal'); const tx = JSON.parse(txJson); tx.inputs[0].signatureScript = '01bb'; return JSON.stringify(tx); } },
+    wallet: { sign: async ({ txJson, action }) => { assert.equal(action, 'reveal'); const tx = JSON.parse(txJson); tx.inputs[1].signatureScript = '01bb'; return JSON.stringify(tx); } },
     store: new MemoryTerminalStore(),
   });
   assert.deepEqual(result, { status: 'confirmed', transactionId: 'ee'.repeat(32), message: 'Reveal confirmed.' });
