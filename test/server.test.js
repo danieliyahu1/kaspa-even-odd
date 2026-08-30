@@ -31,6 +31,10 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /Claim pot/);
   assert.match(browserSource, /Match the /);
   assert.match(browserSource, /data-reveal-number/);
+  assert.match(browserSource, /Wrong number/);
+  assert.match(browserSource, /INVALID_REVEAL/);
+  assert.match(browserSource, /reveal-notice/);
+  assert.doesNotMatch(browserSource, /showNotice\('#game-action'/);
   assert.match(browserSource, /data-commit-number/);
   assert.match(browserSource, /data-join-number/);
   assert.match(browserSource, /createRevealSecret\(number\)/);

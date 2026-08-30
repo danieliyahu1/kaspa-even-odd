@@ -137,7 +137,7 @@ async function paintGame(gameId, game) {
     : game.confirmationStatus === 'confirmed' ? 'Waiting on your friend.'
     : 'Locking it in.';
   const action = game.canReveal
-    ? '<div id="game-action"><div class="notice"><strong>Show your number.</strong>Select the same number you privately locked in: 1 (odd) or 2 (even). Both numbers are added up; the total decides which side wins.</div><p class="number-prompt">Your locked number</p><div class="number-choices"><button type="button" class="number-choice" data-reveal-number="1"><span>1</span><small>odd</small></button><button type="button" class="number-choice" data-reveal-number="0"><span>2</span><small>even</small></button></div><div class="actions"><button data-action="reveal" disabled>Reveal with Kastle</button></div></div>'
+    ? '<div id="game-action"><div id="reveal-notice"><div class="notice"><strong>Show your number.</strong>Select the same number you privately locked in: 1 (odd) or 2 (even). Both numbers are added up; the total decides which side wins.</div></div><p class="number-prompt">Your locked number</p><div class="number-choices"><button type="button" class="number-choice" data-reveal-number="1"><span>1</span><small>odd</small></button><button type="button" class="number-choice" data-reveal-number="0"><span>2</span><small>even</small></button></div><div class="actions"><button data-action="reveal" disabled>Reveal with Kastle</button></div></div>'
       : '';
   const safety = game.safetyAction === 'fallback_claim' ? '<div id="game-safety"><div class="notice warn"><strong>Recovery action.</strong>If your friend never reveals, you can claim the whole pot after a five-minute wait.</div><div class="actions"><button class="secondary" data-action="safety">Claim pot</button></div></div>' : '';
   const terminal = game.status === 'fallback_claimed' ? '<div class="notice"><strong>Pot claimed.</strong>You took the pot when your friend went quiet.</div>'
@@ -156,7 +156,7 @@ async function paintGame(gameId, game) {
   if (reveal) reveal.onclick = async () => {
     reveal.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#game-action');
+      const { provider, account } = await connectKastle('#reveal-notice');
       rememberAddress(account.address);
       if (revealChoice === null) throw new Error('Choose your number first');
       const prepared = await api(`/api/games/${gameId}/reveal/prepare`, { method: 'POST', body: {
@@ -165,14 +165,20 @@ async function paintGame(gameId, game) {
         choice: revealChoice,
         nonceHex: FIXED_NONCE_HEX,
       } });
-      showNotice('#game-action', 'Approve reveal in Kastle', `Network fee: ${formatKas(prepared.feeSompi)} KAS. Your number becomes public after broadcast.`, '');
+      showNotice('#reveal-notice', 'Approve reveal in Kastle', `Network fee: ${formatKas(prepared.feeSompi)} KAS. Your number becomes public after broadcast.`, '');
       const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
       if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
       await api(`/api/games/${gameId}/reveal/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
       await refreshGame(gameId);
     } catch (error) {
       reveal.disabled = false;
-      showNotice('#game-action', 'Reveal was not submitted', error.message, 'error');
+      if (error.code === 'INVALID_REVEAL') {
+        revealChoice = null;
+        document.querySelectorAll('[data-reveal-number]').forEach((item) => item.classList.remove('selected'));
+        showNotice('#reveal-notice', 'Wrong number', 'That number doesn\u2019t match the one you locked in. Select your locked number \u2014 1 (odd) or 2 (even) \u2014 then try again.', 'error');
+      } else {
+        showNotice('#reveal-notice', 'Reveal was not submitted', error.message, 'error');
+      }
     }
   };
   const copy = document.querySelector('[data-action="copy"]');
@@ -329,7 +335,11 @@ function renderBackendError(message) {
 async function api(url, options = {}) {
   const response = await fetch(url, { method: options.method ?? 'GET', headers: { 'content-type': 'application/json' }, body: options.body ? JSON.stringify(options.body) : undefined });
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.message ?? body.error ?? 'Backend request failed');
+  if (!response.ok) {
+    const error = new Error(body.message ?? body.error ?? 'Backend request failed');
+    error.code = body.error;
+    throw error;
+  }
   return body;
 }
 function showNotice(selector, title, message, kind) {
