@@ -25,14 +25,22 @@ test('server serves the browser application and health probe', async (t) => {
   assert.equal(missing.status, 404);
   assert.equal(demoApi.status, 404);
   const browserSource = await appScript.text();
-  assert.doesNotMatch(browserSource, /api\/demo|localStorage|eo-demo-player|Simulate timeout/);
+  assert.doesNotMatch(browserSource, /api\/demo|eo-demo-player|Simulate timeout/);
   assert.match(browserSource, /api\/games\/prepare/);
   assert.doesNotMatch(browserSource, /one DAA confirmation/i);
-  assert.match(browserSource, /Joining unavailable/);
-  assert.match(browserSource, /Claim timeout pot/);
-  assert.match(browserSource, /Commit vote & match stake/);
+  assert.match(browserSource, /Claim pot/);
+  assert.match(browserSource, /Match the /);
   assert.match(browserSource, /data-reveal-number/);
+  assert.match(browserSource, /data-commit-number/);
+  assert.match(browserSource, /data-join-number/);
+  assert.match(browserSource, /createRevealSecret\(number\)/);
+  assert.doesNotMatch(browserSource, /createRevealSecret\(yourSide/);
+  assert.match(browserSource, /Guess even/);
+  assert.match(browserSource, /joinSection\(/);
+  assert.doesNotMatch(browserSource, /renderJoin\(|#join-card|Joining unavailable/);
+  assert.doesNotMatch(browserSource, /data-action="create"/);
   assert.doesNotMatch(browserSource, /Refund my stake|Refund unmatched game/);
+  assert.doesNotMatch(browserSource, /covenant|UTXO|commitment preimage|Player A side|\bPrepare with backend\b|\bCommit vote\b/i);
 });
 
 async function waitForServer(url) {
