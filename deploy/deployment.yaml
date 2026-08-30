@@ -22,7 +22,7 @@ spec:
         fsGroup: 1000
       containers:
         - name: kaspa-even-odd
-          image: ghcr.io/danieliyahu1/kaspa-even-odd/kaspa-even-odd:sha-41497c151bd853dc861b2008bc6a9df7010ec56c
+          image: ghcr.io/danieliyahu1/kaspa-even-odd/kaspa-even-odd:sha-5a7d384c4d5e19c5bae0a5a1e0626ca070e16c75
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
