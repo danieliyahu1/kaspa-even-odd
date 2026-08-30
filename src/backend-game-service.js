@@ -1,4 +1,5 @@
 import { KaspaChainAdapter } from './chain-adapter.js';
+import { randomUUID } from 'node:crypto';
 import { normalizePublicKey, prepareCreateGame } from './create-game.js';
 import { verifySignedCreationSafeJson } from './genesis-transaction.js';
 import { deriveGameInstance } from './covenant/even-odd.mjs';
@@ -9,6 +10,8 @@ import { parityOutcome, verifyRevealPreimage } from './reveal.js';
 import { blake2b256 } from './hashes/blake2b.mjs';
 import { FALLBACK_CLAIM_DAA_OFFSET, FIVE_MINUTE_DAA_OFFSET, NO_REVEAL_REFUND_DAA_OFFSET } from './terminal-actions.js';
 import { NETWORK, PROTOCOL_VERSION, ProtocolError, validateGameId } from './protocol.js';
+
+const MATCH_STAKE_KAS = 1;
 
 export class BackendGameService {
   constructor({ rpc, store }) {
@@ -21,7 +24,48 @@ export class BackendGameService {
     return { network: NETWORK, protocolVersion: PROTOCOL_VERSION, virtualDaaScore: String(dag.virtualDaaScore ?? dag.virtualDaaScoreString) };
   }
 
+  async joinMatchmaking(input) {
+    const address = this.#matchmakingAddress(input.address);
+    const publicKey = normalizePublicKey(input.publicKey, 'matchmaking public key');
+    const match = await this.store.joinMatchmaking({ matchId: randomUUID(), address, publicKey });
+    return this.#matchResponse(match, address);
+  }
+
+  async matchmakingStatus(matchId, address) {
+    const match = await this.store.loadMatch(matchId);
+    const playerAddress = this.#matchmakingAddress(address);
+    this.#matchPlayer(match, playerAddress);
+    await this.store.touchMatch(matchId, playerAddress);
+    return this.#matchResponse(await this.store.loadMatch(matchId), playerAddress);
+  }
+
+  async submitMatchVote(matchId, input) {
+    const address = this.#matchmakingAddress(input.address);
+    const commitment = normalizeHex(input.commitment, 32, 'matchmaking commitment');
+    const match = await this.store.loadMatch(matchId);
+    const player = this.#matchPlayer(match, address);
+    if (!['matched', 'ready', 'started'].includes(match.status) || match.players.length !== 2) {
+      throw new ProtocolError('MATCH_NOT_READY', 'Wait until a rival is found before locking your vote');
+    }
+    if (player.commitment && player.commitment !== commitment) throw new ProtocolError('MATCH_VOTE_LOCKED', 'Your vote is already locked for this match');
+    const updated = await this.store.updateMatch(matchId, (current) => {
+      const participant = current.players.find((item) => item.address === address);
+      participant.commitment = commitment;
+      if (current.status !== 'started' && current.players.length === 2 && current.players.every((item) => item.commitment)) current.status = 'ready';
+    });
+    return this.#matchResponse(updated, address);
+  }
+
+  async leaveMatchmaking(matchId, address) {
+    const playerAddress = this.#matchmakingAddress(address);
+    const match = await this.store.loadMatch(matchId);
+    this.#matchPlayer(match, playerAddress);
+    await this.store.leaveMatch(matchId, playerAddress);
+    return { matchId, status: 'left' };
+  }
+
   async prepareCreation(input) {
+    if (input.matchId) await this.#validateMatchCreation(input);
     const dag = await this.rpc.getBlockDagInfo();
     const request = prepareCreateGame({
       network: NETWORK,
@@ -40,16 +84,20 @@ export class BackendGameService {
       request: serializeRequest(request),
       prepared: serializePrepared(prepared),
       createdAt: new Date().toISOString(),
+      ...(input.matchId ? { matchId: input.matchId } : {}),
     };
     await this.store.savePrepared(record);
     return { network: NETWORK, preparedHash: prepared.preparedHash, txJson: prepared.txJson, feeSompi: String(prepared.feeSompi), deadlineDaa: String(request.deadlineDaa) };
   }
 
-  async submitCreation({ preparedHash, signedTxJson }) {
+  async submitCreation({ preparedHash, signedTxJson, matchId }) {
     const record = await this.store.loadPrepared(preparedHash);
     if (!record) throw new ProtocolError('PREPARATION_NOT_FOUND', 'Prepared transaction was not found or has expired');
     const request = deserializeRequest(record.request);
     const prepared = deserializePrepared(record.prepared);
+    if (Boolean(record.matchId) !== Boolean(matchId) || (matchId && record.matchId !== matchId)) {
+      throw new ProtocolError('MATCH_NOT_READY', 'This creation does not belong to the matchmaking session');
+    }
     verifySignedCreationSafeJson({ preparedTxJson: prepared.txJson, signedTxJson, request, policy: prepared.policy });
     const transactionId = validateGameId(await this.rpc.submitSafeJson(signedTxJson));
     await this.store.saveGame({
@@ -60,7 +108,9 @@ export class BackendGameService {
       request: record.request,
       prepared: record.prepared,
       createdAt: new Date().toISOString(),
+      ...(matchId ? { matchId } : {}),
     });
+    if (matchId) await this.#attachMatchGame(matchId, request.creatorAddress, transactionId);
     return { gameId: transactionId, network: NETWORK, status: 'broadcast', inviteUrl: `/join?v=${encodeURIComponent(PROTOCOL_VERSION)}&game=${transactionId}` };
   }
 
@@ -69,6 +119,8 @@ export class BackendGameService {
     const gameRecord = await this.store.loadGame(id);
     if (!gameRecord) throw new ProtocolError('GAME_NOT_FOUND', 'Game was not found');
     if (gameRecord.join?.transactionId) throw new ProtocolError('GAME_ALREADY_JOINED', 'Another player already joined this game');
+    if (gameRecord.matchId && input.matchId !== gameRecord.matchId) throw new ProtocolError('MATCH_NOT_READY', 'This game belongs to a different matchmaking session');
+    if (gameRecord.matchId) await this.#validateMatchJoin(gameRecord.matchId, id, input.joinerAddress);
     const request = deserializeRequest(gameRecord.request);
     const creation = deserializePrepared(gameRecord.prepared);
     const joinerPublicKey = normalizePublicKey(input.joinerPublicKey, 'joiner public key');
@@ -127,6 +179,7 @@ export class BackendGameService {
       joinedRedeemScript: joined.redeemScript.toString('hex'),
       covenantId: creation.covenantId,
       createdAt: new Date().toISOString(),
+      ...(gameRecord.matchId ? { matchId: gameRecord.matchId } : {}),
     };
     await this.store.saveJoinPrepared(record);
     return { gameId: id, preparedHash: record.preparedHash, txJson: record.txJson, stakeSompi: String(request.stakeSompi), feeSompi: record.feeSompi };
@@ -138,6 +191,7 @@ export class BackendGameService {
     if (!prepared || prepared.gameId !== id) throw new ProtocolError('PREPARATION_NOT_FOUND', 'Join preparation was not found');
     const gameRecord = await this.store.loadGame(id);
     if (!gameRecord) throw new ProtocolError('GAME_NOT_FOUND', 'Game was not found');
+    if (gameRecord.matchId && prepared.matchId !== gameRecord.matchId) throw new ProtocolError('MATCH_NOT_READY', 'This join does not belong to the matchmaking session');
     if (gameRecord.join?.transactionId) throw new ProtocolError('GAME_ALREADY_JOINED', 'Another player already joined this game');
     const request = deserializeRequest(gameRecord.request);
     const creation = deserializePrepared(gameRecord.prepared);
@@ -426,6 +480,7 @@ export class BackendGameService {
       firstRevealer: confirmedReveals[0]?.playerAddress,
       winner: refreshed.winner,
       winnerAddress: refreshed.winner === 'creator' ? request.creatorAddress : refreshed.winner === 'joiner' ? refreshed.join?.joinerAddress : null,
+      matchmaking: Boolean(refreshed.matchId),
       revealedPicks: Object.fromEntries(confirmedReveals.map((reveal) => [reveal.role, reveal.choice])),
       canReveal: ['joined', 'first_revealed'].includes(status),
       safetyAction: status === 'first_revealed' ? 'fallback_claim'
@@ -447,6 +502,69 @@ export class BackendGameService {
   #creator(request, address, publicKey) {
     if (address !== request.creatorAddress || publicKey !== request.creatorPublicKey) throw new ProtocolError('NOT_A_PLAYER', 'Only Player A can refund this game');
     return { role: 'creator', address, publicKey, commitment: request.creatorCommitment };
+  }
+
+  #matchmakingAddress(value) {
+    if (typeof value !== 'string' || !value.startsWith('kaspatest:')) throw new ProtocolError('INVALID_ADDRESS', 'Matchmaking requires a testnet wallet');
+    return value;
+  }
+
+  #matchPlayer(match, address) {
+    if (!match || !Array.isArray(match.players)) throw new ProtocolError('MATCH_NOT_FOUND', 'Matchmaking session was not found');
+    const index = match.players.findIndex((player) => player.address === address);
+    if (index < 0) throw new ProtocolError('NOT_A_PLAYER', 'This wallet is not part of the matchmaking session');
+    return match.players[index];
+  }
+
+  #matchResponse(match, address) {
+    if (!match) throw new ProtocolError('MATCH_NOT_FOUND', 'Matchmaking session was not found');
+    const index = match.players.findIndex((player) => player.address === address);
+    if (index < 0) throw new ProtocolError('NOT_A_PLAYER', 'This wallet is not part of the matchmaking session');
+    const creatorIndex = match.creatorIndex;
+    const creatorSide = match.creatorSide;
+    const isCreator = match.status !== 'waiting' && index === creatorIndex;
+    const side = creatorSide === (isCreator ? 'even' : 'odd') ? 'even' : 'odd';
+    return {
+      matchId: match.matchId,
+      status: match.status,
+      role: match.status === 'waiting' ? null : isCreator ? 'creator' : 'joiner',
+      side: match.status === 'waiting' ? null : side,
+      gameId: match.gameId ?? null,
+      stakeKas: MATCH_STAKE_KAS,
+      ready: match.status === 'ready' || match.status === 'started',
+      opponentConnected: match.players.length === 2,
+      voteLocked: Boolean(match.players[index].commitment),
+    };
+  }
+
+  async #attachMatchGame(matchId, creatorAddress, gameId) {
+    const match = await this.store.loadMatch(matchId);
+    if (!match) throw new ProtocolError('MATCH_NOT_FOUND', 'Matchmaking session was not found');
+    const creator = this.#matchPlayer(match, creatorAddress);
+    const creatorIndex = match.players.indexOf(creator);
+    if (!['matched', 'ready'].includes(match.status) || creatorIndex !== match.creatorIndex || !creator.commitment) {
+      throw new ProtocolError('MATCH_NOT_READY', 'The creator vote must be locked first');
+    }
+    await this.store.updateMatch(matchId, (current) => { current.gameId = gameId; current.status = 'started'; });
+  }
+
+  async #validateMatchCreation(input) {
+    const match = await this.store.loadMatch(input.matchId);
+    const player = this.#matchPlayer(match, input.creatorAddress);
+    const playerIndex = match.players.indexOf(player);
+    const assignedSide = match.creatorSide === (playerIndex === match.creatorIndex ? 'even' : 'odd') ? 'even' : 'odd';
+    if (match.status !== 'ready' || playerIndex !== match.creatorIndex || input.stakeKas !== MATCH_STAKE_KAS || input.side !== assignedSide || player.commitment !== input.creatorCommitment) {
+      throw new ProtocolError('MATCH_NOT_READY', 'This matchmaking game is not ready to start');
+    }
+  }
+
+  async #validateMatchJoin(matchId, gameId, address) {
+    const match = await this.store.loadMatch(matchId);
+    const player = this.#matchPlayer(match, address);
+    const playerIndex = match.players.indexOf(player);
+    if (match.status !== 'started' || match.gameId !== gameId || playerIndex === match.creatorIndex) {
+      throw new ProtocolError('MATCH_NOT_READY', 'This matchmaking game is not ready for you');
+    }
   }
 
   async #actionFunding(address, feeSompi) {

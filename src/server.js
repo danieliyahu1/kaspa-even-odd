@@ -42,6 +42,22 @@ async function route(req, res) {
   if (req.method === 'POST' && pathname === '/api/games/submit') {
     return sendJson(res, 202, await gameService.submitCreation(await readJson(req)));
   }
+  if (req.method === 'POST' && pathname === '/api/matchmaking/join') {
+    return sendJson(res, 200, await gameService.joinMatchmaking(await readJson(req)));
+  }
+  const matchStatus = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})$/i);
+  const matchAction = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})\/(commit|leave)$/i);
+  if (req.method === 'GET' && matchStatus) {
+    const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+    return sendJson(res, 200, await gameService.matchmakingStatus(matchStatus[1], query.get('address')));
+  }
+  if (req.method === 'POST' && matchAction?.[2] === 'commit') {
+    return sendJson(res, 200, await gameService.submitMatchVote(matchAction[1], await readJson(req)));
+  }
+  if (req.method === 'POST' && matchAction?.[2] === 'leave') {
+    const body = await readJson(req);
+    return sendJson(res, 200, await gameService.leaveMatchmaking(matchAction[1], body.address));
+  }
   const gameMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})$/i);
   const joinMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})\/join\/(prepare|submit)$/i);
   const revealMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})\/reveal\/(prepare|submit)$/i);
@@ -68,7 +84,7 @@ async function route(req, res) {
     return sendJson(res, 200, await gameService.readGame(gameMatch[1]));
   }
 
-  if (req.method === 'GET' && (pathname === '/' || pathname === '/join' || pathname === '/game')) {
+  if (req.method === 'GET' && (pathname === '/' || pathname === '/host' || pathname === '/rival' || pathname === '/join' || pathname === '/game')) {
     return serveFile(publicRoot, 'index.html', res);
   }
   if (req.method === 'GET' && /^\/(app|styles)\.\w+$/.test(pathname)) {
@@ -97,7 +113,7 @@ function readJson(req) {
 function sendError(res, error) {
   const code = error?.code ?? 'INTERNAL_ERROR';
   const clientError = error instanceof ProtocolError || ['INVALID_JSON', 'REQUEST_TOO_LARGE'].includes(code);
-  const notFound = ['GAME_NOT_FOUND', 'PREPARATION_NOT_FOUND'].includes(code);
+  const notFound = ['GAME_NOT_FOUND', 'PREPARATION_NOT_FOUND', 'MATCH_NOT_FOUND'].includes(code);
   if (!clientError) console.error(error);
   sendJson(res, notFound ? 404 : clientError ? 400 : 502, {
     error: code,

@@ -1,6 +1,9 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { randomInt } from 'node:crypto';
 import { dirname } from 'node:path';
 import { ProtocolError } from './protocol.js';
+
+const MATCH_WAIT_TIMEOUT_MS = 30_000;
 
 export class BackendGameStore {
   constructor(filePath) {
@@ -25,6 +28,79 @@ export class BackendGameStore {
     await this.#update((data) => { data.games[record.gameId] = record; });
   }
 
+  async joinMatchmaking(player) {
+    return this.#updateWithResult((data) => {
+      const now = Date.now();
+      for (const match of Object.values(data.matches)) {
+        if (!['waiting', 'matched', 'ready'].includes(match.status)) continue;
+        const lastSeen = Math.min(...match.players.map((player) => Date.parse(player.lastSeenAt ?? player.joinedAt ?? '')));
+        if (!Number.isFinite(lastSeen) || now - lastSeen > MATCH_WAIT_TIMEOUT_MS) match.status = 'cancelled';
+      }
+      data.queue = data.queue.filter((matchId) => data.matches[matchId]?.status === 'waiting');
+      const active = Object.values(data.matches).find((match) => ['waiting', 'matched', 'ready'].includes(match.status)
+        && match.players.some((item) => item.address === player.address));
+      if (active) {
+        active.status = 'cancelled';
+        data.queue = data.queue.filter((matchId) => matchId !== active.matchId);
+      }
+
+      const waiting = data.queue
+        .map((matchId) => data.matches[matchId])
+        .find((match) => match?.status === 'waiting');
+      const participant = { ...player, joinedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() };
+      if (!waiting) {
+        const match = { matchId: player.matchId, status: 'waiting', players: [participant], createdAt: participant.joinedAt };
+        data.matches[match.matchId] = match;
+        data.queue.push(match.matchId);
+        return match;
+      }
+
+      waiting.players.push(participant);
+      waiting.status = 'matched';
+      waiting.creatorIndex = randomInt(2);
+      waiting.creatorSide = randomInt(2) === 0 ? 'even' : 'odd';
+      data.queue = data.queue.filter((matchId) => matchId !== waiting.matchId);
+      return waiting;
+    });
+  }
+
+  async loadMatch(matchId) {
+    return clone((await this.#read()).matches[matchId] ?? null);
+  }
+
+  async touchMatch(matchId, address) {
+    await this.#update((data) => {
+      const match = data.matches[matchId];
+      const player = match?.players.find((item) => item.address === address);
+      if (player) player.lastSeenAt = new Date().toISOString();
+    });
+  }
+
+  async saveMatch(match) {
+    await this.#update((data) => { data.matches[match.matchId] = match; });
+  }
+
+  async updateMatch(matchId, change) {
+    return this.#updateWithResult((data) => {
+      const match = data.matches[matchId];
+      if (!match) return null;
+      change(match);
+      return match;
+    });
+  }
+
+  async leaveMatch(matchId, address) {
+    await this.#update((data) => {
+      const match = data.matches[matchId];
+      if (!match) return;
+      match.players = match.players.filter((player) => player.address !== address);
+      if (['waiting', 'matched', 'ready'].includes(match.status)) {
+        match.status = 'cancelled';
+        data.queue = data.queue.filter((id) => id !== matchId);
+      }
+    });
+  }
+
   async loadJoinPrepared(preparedHash) {
     return clone((await this.#read()).joinPrepared[preparedHash] ?? null);
   }
@@ -42,26 +118,43 @@ export class BackendGameStore {
   }
 
   async #update(change) {
-    this.writeQueue = this.writeQueue.then(async () => {
+    await this.#updateWithResult((data) => { change(data); });
+  }
+
+  async #updateWithResult(change) {
+    const operation = this.writeQueue.then(async () => {
       const data = await this.#read();
-      change(data);
+      const result = change(data);
       await mkdir(dirname(this.filePath), { recursive: true });
       const temporary = `${this.filePath}.${process.pid}.tmp`;
       await writeFile(temporary, JSON.stringify(data, null, 2));
       await rename(temporary, this.filePath);
+      return clone(result);
     });
-    return this.writeQueue;
+    this.writeQueue = operation.then(() => undefined, () => undefined);
+    return operation;
   }
 
   async #read() {
     try {
       const value = JSON.parse(await readFile(this.filePath, 'utf8'));
-      return { prepared: value.prepared ?? {}, games: value.games ?? {}, joinPrepared: value.joinPrepared ?? {}, actionPrepared: value.actionPrepared ?? {} };
+      return normalizeData(value);
     } catch (error) {
-      if (error?.code === 'ENOENT') return { prepared: {}, games: {}, joinPrepared: {}, actionPrepared: {} };
+      if (error?.code === 'ENOENT') return normalizeData({});
       throw new ProtocolError('STORAGE_UNAVAILABLE', `Unable to read backend game store: ${error.message}`);
     }
   }
+}
+
+function normalizeData(value) {
+  return {
+    prepared: value.prepared ?? {},
+    games: value.games ?? {},
+    joinPrepared: value.joinPrepared ?? {},
+    actionPrepared: value.actionPrepared ?? {},
+    queue: value.queue ?? [],
+    matches: value.matches ?? {},
+  };
 }
 
 function clone(value) {

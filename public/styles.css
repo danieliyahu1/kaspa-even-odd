@@ -31,6 +31,9 @@ button { cursor: pointer; }
 main { width: min(100% - 36px, 460px); margin: 0 auto; padding: 44px 0 72px; flex: 1; }
 
 .panel { padding: 28px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.home-actions { display: grid; gap: 10px; }
+.home-button { display: block; text-decoration: none; }
+.home-button.primary, .home-button.outline { width: 100%; }
 .panel-head { margin-bottom: 22px; }
 h1 { margin: 0 0 8px; font-size: 40px; line-height: 1; letter-spacing: -.06em; font-weight: 800; }
 h2 { margin: 0 0 10px; font-size: 32px; line-height: 1.05; letter-spacing: -.05em; font-weight: 800; }

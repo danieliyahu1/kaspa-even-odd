@@ -14,9 +14,217 @@ async function boot() {
     const config = await api('/api/config');
     if (config.network !== NETWORK) throw new Error(`Backend must use ${NETWORK}`);
     if (location.pathname === '/game' || location.pathname === '/join') return renderGame(params.get('id') ?? params.get('game'));
-    renderCreate();
+    if (location.pathname === '/host') return renderCreate();
+    if (location.pathname === '/rival') return renderMatchmaking();
+    renderHome();
   } catch (error) {
     renderBackendError(error.message);
+  }
+}
+
+function renderHome() {
+  app.innerHTML = `
+    <section class="panel home-panel" aria-label="Play Even Odd">
+      <div class="panel-head">
+        <h1>Even / Odd</h1>
+        <p class="lead">A quick game of chance on Kaspa.</p>
+      </div>
+      <div class="home-actions">
+        <a class="primary home-button" href="/rival?start=1">Find a rival</a>
+        <a class="outline home-button" href="/host">Play with a friend</a>
+      </div>
+    </section>`;
+}
+
+async function renderMatchmaking() {
+  app.innerHTML = `
+    <a class="back" href="/">Back</a>
+    <section class="panel" aria-label="Find a rival">
+      <div class="panel-head"><h2>Find a rival</h2><p class="lead">Pick a number. We'll choose your side and match you for 1 KAS.</p></div>
+      <div id="matchmaking-content">
+        <div class="actions"><button type="button" class="primary" id="match-start">Find a rival</button></div>
+      </div>
+    </section>`;
+
+  const content = document.querySelector('#matchmaking-content');
+  let provider;
+  let account;
+  let match;
+  let pollTimer;
+  let vote = null;
+  let started = false;
+
+  async function startMatchmaking() {
+    const button = document.querySelector('#match-start');
+    button.disabled = true;
+    try {
+      ({ provider, account } = await connectKastle('#matchmaking-content'));
+      rememberAddress(account.address);
+      match = await api('/api/matchmaking/join', { method: 'POST', body: { address: account.address, publicKey: account.publicKey } });
+      renderMatchState();
+      pollTimer = setInterval(() => { void refreshMatch(); }, 2500);
+      await refreshMatch();
+    } catch (error) {
+      button.disabled = false;
+      showNotice('#matchmaking-content', 'Could not find a rival', error.message, 'error');
+    }
+  }
+
+  document.querySelector('#match-start').addEventListener('click', startMatchmaking);
+  if (params.get('start') === '1') void startMatchmaking();
+
+  function renderMatchState() {
+    if (match.status === 'waiting') {
+      content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Finding your rival</span></div><button type="button" class="outline" id="match-leave">Cancel</button>`;
+      document.querySelector('#match-leave').addEventListener('click', leave);
+      return;
+    }
+    if (match.status === 'cancelled' || !match.opponentConnected) {
+      content.innerHTML = '<div class="notice error"><strong>Your rival left.</strong>No KAS was locked.</div><div class="actions"><a class="primary home-button" href="/rival">Find another rival</a></div>';
+      return;
+    }
+    if (!match.voteLocked) {
+      content.innerHTML = `
+        <div class="notice"><strong>Rival found.</strong>You're ${escapeHtml(capitalize(match.side))}.</div>
+        <fieldset class="choice-group">
+          <legend>Your number</legend>
+          <div class="choice-row">
+            <button type="button" class="choice num" data-match-vote="1" aria-pressed="false"><span class="num-big">1</span><small class="num-tag">Odd</small></button>
+            <button type="button" class="choice num" data-match-vote="0" aria-pressed="false"><span class="num-big">2</span><small class="num-tag">Even</small></button>
+          </div>
+        </fieldset>
+        <div class="summary">
+          <div class="sum-item"><small>Stake</small><strong>${escapeHtml(match.stakeKas)} KAS</strong></div>
+          <div class="sum-item"><small>Pot</small><strong>${escapeHtml(match.stakeKas * 2)} KAS</strong></div>
+        </div>
+        <div id="match-vote-notice"></div>
+        <div class="actions"><button type="button" class="primary" id="match-vote" disabled>Play for ${escapeHtml(match.stakeKas)} KAS</button></div>`;
+      document.querySelectorAll('[data-match-vote]').forEach((button) => button.addEventListener('click', () => {
+        vote = Number(button.dataset.matchVote);
+        document.querySelectorAll('[data-match-vote]').forEach((item) => {
+          const selected = item === button;
+          item.classList.toggle('selected', selected);
+          item.setAttribute('aria-pressed', String(selected));
+        });
+        document.querySelector('#match-vote').disabled = false;
+      }));
+      document.querySelector('#match-vote').addEventListener('click', commitVote);
+      return;
+    }
+    const message = match.ready ? 'Starting your game' : 'Waiting for your rival to pick a number';
+    content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">${message}</span></div>`;
+  }
+
+  async function commitVote() {
+    if (vote === null) return;
+    const button = document.querySelector('#match-vote');
+    button.disabled = true;
+    try {
+      const secret = createRevealSecret(vote);
+      match = await api(`/api/matchmaking/${match.matchId}/commit`, { method: 'POST', body: { address: account.address, commitment: secret.commitment } });
+      renderMatchState();
+      await advanceMatch();
+    } catch (error) {
+      button.disabled = false;
+      showNotice('#match-vote-notice', 'Game was not started', error.message, 'error');
+    }
+  }
+
+  async function refreshMatch() {
+    if (started) return;
+    try {
+      const previous = match;
+      match = await api(`/api/matchmaking/${match.matchId}?address=${encodeURIComponent(account.address)}`);
+      const changed = previous.status !== match.status
+        || previous.opponentConnected !== match.opponentConnected
+        || previous.voteLocked !== match.voteLocked
+        || previous.ready !== match.ready
+        || previous.gameId !== match.gameId;
+      if (changed) renderMatchState();
+      await advanceMatch();
+    } catch (error) {
+      if (error.code === 'MATCH_NOT_FOUND') clearInterval(pollTimer);
+    }
+  }
+
+  async function advanceMatch() {
+    if (started || !match.ready || !match.voteLocked) return;
+    if (match.role === 'creator' && !match.gameId) {
+      started = true;
+      clearInterval(pollTimer);
+      await startCreation();
+    } else if (match.role === 'joiner' && match.gameId) {
+      started = true;
+      clearInterval(pollTimer);
+      await startJoin();
+    }
+  }
+
+  async function startCreation() {
+    try {
+      content.innerHTML = '<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Preparing your 1 KAS game</span></div>';
+      const secret = createRevealSecret(vote);
+      const prepared = await api('/api/games/prepare', { method: 'POST', body: {
+        creatorAddress: account.address,
+        creatorPublicKey: account.publicKey,
+        creatorCommitment: secret.commitment,
+        side: match.side,
+        stakeKas: 1,
+        matchId: match.matchId,
+      } });
+      showNotice('#matchmaking-content', 'Confirm in Kastle', `Approve the ${match.stakeKas} KAS transaction.`, '');
+      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
+      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
+      const game = await api('/api/games/submit', { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson, matchId: match.matchId } });
+      location.href = `/game?id=${game.gameId}`;
+    } catch (error) {
+      showMatchStartError(error);
+    }
+  }
+
+  async function startJoin() {
+    try {
+      content.innerHTML = '<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Waiting for the 1 KAS game to be ready</span></div>';
+      await waitForJoinableGame(match.gameId);
+      const secret = createRevealSecret(vote);
+      const prepared = await api(`/api/games/${match.gameId}/join/prepare`, { method: 'POST', body: {
+        joinerAddress: account.address,
+        joinerPublicKey: account.publicKey,
+        joinerCommitment: secret.commitment,
+        matchId: match.matchId,
+      } });
+      showNotice('#matchmaking-content', 'Confirm in Kastle', `Approve the ${match.stakeKas} KAS transaction.`, '');
+      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
+      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
+      await api(`/api/games/${match.gameId}/join/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
+      location.href = `/game?id=${match.gameId}`;
+    } catch (error) {
+      showMatchStartError(error);
+    }
+  }
+
+  async function waitForJoinableGame(gameId) {
+    while (true) {
+      const game = await api(`/api/games/${gameId}`);
+      if (game.canJoin) return;
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+  }
+
+  function showMatchStartError(error) {
+    started = false;
+    content.innerHTML = `<div class="notice error"><strong>Game was not started.</strong>${escapeHtml(error.message)}</div><div class="actions"><button type="button" class="primary" id="match-retry">Try again</button></div>`;
+    document.querySelector('#match-retry').addEventListener('click', () => {
+      started = true;
+      if (match.role === 'creator') void startCreation();
+      else void startJoin();
+    });
+  }
+
+  async function leave() {
+    clearInterval(pollTimer);
+    await api(`/api/matchmaking/${match.matchId}/leave`, { method: 'POST', body: { address: account.address } }).catch(() => {});
+    location.href = '/';
   }
 }
 
@@ -139,7 +347,8 @@ async function waitForGameConfirmation(gameId, stakeKas) {
     const form = document.querySelector('#create-form');
     form.prepend(box);
   }
-  document.querySelector('#create-submit').disabled = true;
+   const createSubmit = document.querySelector('#create-submit');
+   if (createSubmit) createSubmit.disabled = true;
   try {
     while (true) {
       const status = await api(`/api/games/${gameId}`);
@@ -275,8 +484,9 @@ async function paintGame(gameId, game) {
 function inviteBox(game, waiting) {
   if (['settled', 'fallback_claimed', 'refunded', 'creator_refunded'].includes(game.status)) return '';
   const waitingRow = waiting
-    ? '<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Waiting for your friend</span></div>'
+    ? `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Waiting for your ${game.matchmaking ? 'rival' : 'friend'}</span></div>`
     : '';
+  if (game.matchmaking) return `<div class="invite-box" id="invite-box">${waitingRow}</div>`;
   return `
     <div class="invite-box" id="invite-box">
       ${waitingRow}
@@ -387,7 +597,7 @@ function safetySection(game) {
   if (game.safetyAction === 'fallback_claim' && game.status === 'first_revealed') {
     return `
       <div id="game-safety" class="safety">
-        <p class="lead">If your friend never reveals</p>
+        <p class="lead">If your ${game.matchmaking ? 'rival' : 'friend'} never reveals</p>
         <p class="muted-note">You can claim the whole pot after the wait.</p>
         <div class="actions"><button type="button" class="outline" data-action="safety">Claim pot</button></div>
       </div>`;
@@ -402,7 +612,7 @@ function safetySection(game) {
 }
 
 function terminalSection(game) {
-  if (game.status === 'fallback_claimed') return '<div class="notice"><strong>Pot claimed.</strong>Your friend never revealed, so you took the pot.</div>';
+  if (game.status === 'fallback_claimed') return `<div class="notice"><strong>Pot claimed.</strong>Your ${game.matchmaking ? 'rival' : 'friend'} never revealed, so you took the pot.</div>`;
   if (game.status === 'refunded' || game.status === 'creator_refunded') return '<div class="notice"><strong>Canceled.</strong>Your stake was returned.</div>';
   return '';
 }
@@ -439,8 +649,8 @@ function resultOverlay(game, role) {
   if (game.status !== 'settled') return '';
   const won = winnerIsYou(game, role);
   const creatorEven = game.creator?.side === 'even';
-  const creatorPick = game.revealedPicks?.creator === undefined ? '\u00b7' : game.revealedPicks.creator;
-  const joinerPick = game.revealedPicks?.joiner === undefined ? '\u00b7' : game.revealedPicks.joiner;
+  const creatorPick = displayPick(game.revealedPicks?.creator);
+  const joinerPick = displayPick(game.revealedPicks?.joiner);
   const resultTitle = role === 'creator' || role === 'joiner'
     ? `${won ? 'You won ' : 'You lost '}<strong>${escapeHtml(game.stakeKas * 2)} KAS</strong>.`
     : `<strong>${capitalize(winnerSideName(game))}</strong> took the pot.`;
@@ -457,6 +667,11 @@ function resultOverlay(game, role) {
       </div>
       ${role === 'creator' || role === 'joiner' ? '<button type="button" class="primary" data-action="play-again">Play again</button>' : ''}
     </div>`;
+}
+
+function displayPick(choice) {
+  if (choice === undefined) return '\u00b7';
+  return choice === 1 ? 1 : 2;
 }
 
 function winnerSideName(game) {

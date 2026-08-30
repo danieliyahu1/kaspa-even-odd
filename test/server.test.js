@@ -11,8 +11,10 @@ test('server serves the browser application and health probe', async (t) => {
   t.after(() => child.kill());
 
   await waitForServer(`http://127.0.0.1:${port}/readyz`);
-  const [page, health, missing, demoApi, appScript] = await Promise.all([
+  const [page, host, rival, health, missing, demoApi, appScript] = await Promise.all([
     fetch(`http://127.0.0.1:${port}/`),
+    fetch(`http://127.0.0.1:${port}/host`),
+    fetch(`http://127.0.0.1:${port}/rival`),
     fetch(`http://127.0.0.1:${port}/healthz`),
     fetch(`http://127.0.0.1:${port}/public-game-list`),
     fetch(`http://127.0.0.1:${port}/api/demo/games`),
@@ -20,6 +22,8 @@ test('server serves the browser application and health probe', async (t) => {
   ]);
 
   assert.equal(page.status, 200);
+  assert.equal(host.status, 200);
+  assert.equal(rival.status, 200);
   assert.match(await page.text(), /Even\/Odd/);
   assert.deepEqual(await health.json().then(({ ok, service, network }) => ({ ok, service, network })), { ok: true, service: 'kaspa-even-odd', network: 'testnet-10' });
   assert.equal(missing.status, 404);
@@ -42,6 +46,11 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /Even \/ Odd|Even\/Odd/);
   assert.doesNotMatch(browserSource, /Guess even/i);
   assert.match(browserSource, /joinSection\(/);
+  assert.match(browserSource, /Find a rival/);
+  assert.match(browserSource, /api\/matchmaking\/join/);
+  assert.match(browserSource, /stakeKas: 1/);
+  assert.match(browserSource, /Play with a friend/);
+  assert.match(browserSource, /location\.pathname === '\/host'/);
   assert.doesNotMatch(browserSource, /renderJoin\(|Joining unavailable/);
   assert.doesNotMatch(browserSource, /data-action="create"/);
   assert.doesNotMatch(browserSource, /Refund my stake|Refund unmatched game/);
