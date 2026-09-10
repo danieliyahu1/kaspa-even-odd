@@ -16,12 +16,9 @@ boot();
 
 async function boot() {
   try {
-    await api('/api/config')
-      .then((config) => {
-        if (config.network !== NETWORK) throw new Error(`Backend must use ${NETWORK}`);
-        if (typeof config.wrpcUrl === 'string' && config.wrpcUrl) serverWrpcUrl = config.wrpcUrl;
-      })
-      .catch(() => { /* The app must run even if the coordinating server is gone. */ });
+    // Never block first paint on the coordinating server: content renders
+    // immediately and the config only refines the preferred wRPC endpoint.
+    void loadServerConfig();
     if (location.pathname === '/join') return renderJoinEntry(params.get('game'));
     if (location.pathname === '/game') return renderGame(params.get('id') ?? params.get('game'));
     if (location.pathname === '/host') return renderCreate();
@@ -30,6 +27,17 @@ async function boot() {
   } catch (error) {
     logError('boot_failed', { code: error.code, message: error.message });
     renderBackendError(error.message);
+  }
+}
+
+async function loadServerConfig() {
+  try {
+    const config = await api('/api/config');
+    if (config.network !== NETWORK) throw new Error(`Backend must use ${NETWORK}`);
+    if (typeof config.wrpcUrl === 'string' && config.wrpcUrl) serverWrpcUrl = config.wrpcUrl;
+  } catch (error) {
+    // The app must run even if the coordinating server is gone.
+    logDebug('config_unavailable', { message: error?.message });
   }
 }
 

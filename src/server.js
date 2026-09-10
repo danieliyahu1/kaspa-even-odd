@@ -51,7 +51,8 @@ if (!Number.isInteger(rateLimitPerMinute) || rateLimitPerMinute < 1) throw new E
 
 const metrics = new Metrics();
 metrics.setProductInfo(PROTOCOL_VERSION);
-const rpc = withRpcMetrics(new WrpcClient({ network: configuredNetwork }), metrics);
+const chainClient = new WrpcClient({ network: configuredNetwork });
+const rpc = withRpcMetrics(chainClient, metrics);
 const store = new BackendGameStore(process.env.GAME_STORE_PATH ?? '.data/games.json', { metrics });
 const gameService = new BackendGameService({ rpc, store, metrics });
 
@@ -63,6 +64,10 @@ const relay = new RelayStore();
 const mutatingLimiter = new RateLimiter({ limit: rateLimitPerMinute, windowMs: 60_000 });
 
 await store.init();
+
+// Warm the node connection in the background so the first real chain call is
+// not the slow one. Never block startup or fail it on a cold node.
+void chainClient.connect().catch((error) => logger.debug('rpc_warmup_failed', { message: error?.message }));
 
 const server = createServer((req, res) => {
   const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;

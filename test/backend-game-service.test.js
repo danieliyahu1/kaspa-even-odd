@@ -98,10 +98,10 @@ test('matchmaking creation starts as soon as the creator locks a vote', async (t
   );
 });
 
-test('network status exposes a browser-usable wRPC endpoint', async (t) => {
+test('network status is served without touching the node', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const rpc = { getBlockDagInfo: async () => ({ virtualDaaScore: '100' }) };
+  const rpc = { getBlockDagInfo: async () => { throw new Error('networkStatus must not query the node'); } };
   const service = new BackendGameService({ rpc, store: new BackendGameStore(join(directory, 'games.json')) });
 
   const previous = process.env.KASPA_WRPC_BROWSER_URL;
@@ -109,7 +109,7 @@ test('network status exposes a browser-usable wRPC endpoint', async (t) => {
     delete process.env.KASPA_WRPC_BROWSER_URL;
     const status = await service.networkStatus();
     assert.equal(status.network, 'testnet-10');
-    assert.equal(status.virtualDaaScore, '100');
+    assert.equal(status.virtualDaaScore, undefined);
     // Default must be a wss:// URL: the web SDK resolver returns https://
     // endpoints that browsers block via CORS.
     assert.match(status.wrpcUrl, /^wss:\/\//);

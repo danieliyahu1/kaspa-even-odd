@@ -25,12 +25,12 @@ export class BackendGameService {
     this.ephemeral = ephemeral;
   }
 
-  async networkStatus() {
-    const dag = await this.rpc.getBlockDagInfo();
+  // Static config only: deliberately does not touch the node, so booting the
+  // client never blocks on a wRPC round-trip. DAA is read live where it matters.
+  networkStatus() {
     return {
       network: NETWORK,
       protocolVersion: PROTOCOL_VERSION,
-      virtualDaaScore: String(dag.virtualDaaScore ?? dag.virtualDaaScoreString),
       // Browser-usable wRPC endpoint. Distinct from the server's own
       // KASPA_WRPC_URL so a private/internal node URL never leaks to clients.
       wrpcUrl: process.env.KASPA_WRPC_BROWSER_URL ?? DEFAULT_WRPC_URL,
