@@ -116,12 +116,20 @@ The repository includes a production container and Kubernetes manifests under
 protocol implementation remains the module exported by `src/index.js`.
 
 `git push` to `main` is the deploy button. CI builds the `linux/arm64` image,
-smoke-tests the container against `/healthz`, pushes the immutable
-`sha-<commit>` tag to GHCR, and commits that tag back into
-`deploy/deployment.yaml` (`deploy: sha-<commit> [skip ci]`). Argo CD syncs the
-cluster to Git — `prune` + `selfHeal` keep Git authoritative — so the pod
-rolls to the new image automatically. CI never talks to Kubernetes and holds
-no cluster credential; there is no second deploy path.
+smoke-tests the published artifact against `/readyz` and `/metrics`, pushes the
+immutable `sha-<commit>` tag to GHCR, and commits the exact published digest
+into `deploy/deployment.yaml` (`deploy: sha-<commit>`), preserving the source
+commit in the `kaspa-even-odd/source-revision` annotation. The generated commit
+touches only `deploy/deployment.yaml`, which is excluded from the workflow
+trigger, so the delivery flow terminates without recursing. Argo CD syncs the
+cluster to Git — `prune` + `selfHeal` keep Git authoritative — so the pod rolls
+to the new digest automatically. CI never talks to Kubernetes and holds no
+cluster credential; there is no second deploy path.
+
+Pull requests run the full validation plus an ARM64 image build (without
+publishing). Several pushes in quick succession cancel obsolete in-flight
+builds so the newest revision wins, and CI refuses to advance the manifest if a
+newer source push has already landed on `main`.
 
 Local verification mirrors the CI gate:
 
@@ -135,17 +143,47 @@ docker build --platform linux/arm64 -t ghcr.io/danieliyahu1/kaspa-even-odd/kaspa
 image line is updated by CI, never by hand. Deleting a file under `deploy/`
 removes the corresponding object from the cluster (Argo prunes it).
 
+The optional `scripts/manual-smoke.mjs` live test signs and broadcasts a real
+testnet-10 transaction. It commits no wallet material; supply a throwaway
+testnet wallet through the environment:
+
+```sh
+EO_CREATOR_ADDRESS=... EO_CREATOR_PUBLIC_KEY=... EO_CREATOR_PRIVATE_KEY=... node scripts/manual-smoke.mjs --dry-run
+```
+
 Runtime details:
 
 - Namespace: `kaspa-even-odd`
-- Port: `3000`
-- Readiness endpoint: `/readyz`
-- Liveness endpoint: `/healthz`
-- Required runtime secrets: none
+- Public port: `3000`; internal metrics port: `9464`
+- Readiness endpoint: `/readyz` (returns 503 unless the state volume is both
+  readable and writable and the store parses as valid JSON)
+- Liveness endpoint: `/healthz` (process liveness only)
+- Required runtime secrets: none. No ExternalSecret is needed; the `oci-vault`
+  `ClusterSecretStore` contract is unused because the app has no server-side
+  secret. Wallet keys never leave the browser.
 - Required network: `KASPA_NETWORK=testnet-10` (the process fails closed for
   any other value); `KASPA_WRPC_URL` can pin a testnet-10 wRPC node.
 - Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
-  `/var/lib/kaspa-even-odd` stores non-secret backend game metadata.
+  `/var/lib/kaspa-even-odd` stores non-secret backend game metadata. It is
+  `ReadWriteOnce` and only ever mounted by a single replica; the Deployment uses
+  `strategy: Recreate` for that reason.
+- Request controls: `MAX_REQUEST_BYTES` (default 1,000,000) caps request bodies,
+  and `RATE_LIMIT_PER_MINUTE` (default 300) caps mutating API calls per client.
+  Set `TRUST_PROXY=true` only behind a trusted proxy that rewrites
+  `x-forwarded-for`. The in-memory relay expires entries after 10 minutes and
+  caps payloads and entry count; reveal preparations are held in memory with a
+  TTL instead of being written to the PVC.
+
+Observability:
+
+- The serving process exposes Prometheus metrics on `9464` at `/metrics`
+  (requests, errors, latency, wRPC calls, store operations, matchmaking
+  backlog, relay entries, process memory). The public Service does not expose
+  this port.
+- `deploy/metrics-service.yaml` and `deploy/vmservicescrape.yaml` register the
+  scrape target with the VictoriaMetrics operator.
+- `deploy/grafana-dashboard.yaml` provisions the "Kaspa Even/Odd" dashboard
+  into the `observability` namespace via the `grafana_dashboard: "1"` label.
 
 ## Trustless client
 
