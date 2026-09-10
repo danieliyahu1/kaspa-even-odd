@@ -1,11 +1,16 @@
 // Dependency-free leveled logger for operational debugging.
 //
-// Output is intentionally identity-free: field names that could carry wallet
+// Output is identity-free by default: field names that could carry wallet
 // addresses, transaction ids, nonces, keys, signatures, or request bodies are
 // redacted before they reach the stream. Callers pass explicit scalar fields;
 // request bodies and raw URLs are never logged.
+//
+// Set LOG_WALLET_ADDRESSES=1 for a debug session to reveal wallet addresses
+// only. Nonces, keys, signatures, secrets, and bodies stay redacted in every
+// mode, so commitments and reveal preimages are never written to the stream.
 const LEVELS = Object.freeze({ debug: 10, info: 20, warn: 30, error: 40 });
-const REDACTED_FIELD = /(address|nonce|key|signature|private|secret|txjson|preparedhash|commitment|body|ip)/i;
+const SECRET_FIELD = /(nonce|key|signature|private|secret|txjson|preparedhash|commitment|body|ip)/i;
+const ADDRESS_FIELD = /address/i;
 const MAX_VALUE_LENGTH = 200;
 
 export function createLogger({
@@ -13,6 +18,7 @@ export function createLogger({
   format = process.env.LOG_FORMAT ?? 'text',
   stream = process.stderr,
   now = () => new Date(),
+  redactAddresses = process.env.LOG_WALLET_ADDRESSES !== '1',
 } = {}) {
   const normalizedLevel = String(level).toLowerCase();
   const threshold = LEVELS[normalizedLevel] ?? LEVELS.info;
@@ -21,7 +27,7 @@ export function createLogger({
   function emit(name, event, fields = {}) {
     if ((LEVELS[name] ?? LEVELS.info) < threshold) return;
     const timestamp = now().toISOString();
-    const safe = sanitizeFields(fields);
+    const safe = sanitizeFields(fields, { redactAddresses });
     const line = normalizedFormat === 'json'
       ? JSON.stringify({ time: timestamp, level: name, event, ...safe })
       : renderText(timestamp, name, event, safe);
@@ -39,11 +45,11 @@ export function createLogger({
 
 export const logger = createLogger();
 
-export function sanitizeFields(fields = {}) {
+export function sanitizeFields(fields = {}, { redactAddresses = true } = {}) {
   const safe = {};
   for (const [name, value] of Object.entries(fields)) {
     if (value === undefined || value === null) continue;
-    if (REDACTED_FIELD.test(name)) {
+    if (SECRET_FIELD.test(name) || (redactAddresses && ADDRESS_FIELD.test(name))) {
       safe[name] = '<redacted>';
       continue;
     }

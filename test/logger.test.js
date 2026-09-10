@@ -57,3 +57,26 @@ test('sanitizeFields coerces errors and truncates long values', () => {
   assert.equal(safe.missing, undefined);
   assert.ok(safe.long.length <= 201);
 });
+
+test('logger reveals wallet addresses only when redactAddresses is disabled', () => {
+  const { lines, stream } = capture();
+  const logger = createLogger({ level: 'info', stream, now: () => new Date('2026-01-01T00:00:00.000Z'), redactAddresses: false });
+  logger.info('session', {
+    address: 'kaspatest:qpg2gxu40zmtuwnsgny5mh7d7sq59dzfsnfsn0u5ds79az0tjh2g7f6gwpdn7',
+    nonce: 'aa'.repeat(32),
+    publicKey: 'bb'.repeat(32),
+    commitment: 'cc'.repeat(32),
+    body: '{"secret":true}',
+  });
+  assert.match(lines[0], /address="kaspatest:qpg2gxu40zmtuwnsgny5mh7d7sq59dzfsnfsn0u5ds79az0tjh2g7f6gwpdn7"/);
+  assert.match(lines[0], /nonce=<redacted>/);
+  assert.match(lines[0], /publicKey=<redacted>/);
+  assert.match(lines[0], /commitment=<redacted>/);
+  assert.match(lines[0], /body=<redacted>/);
+});
+
+test('sanitizeFields can reveal addresses without exposing secrets', () => {
+  const safe = sanitizeFields({ address: 'kaspatest:abc', nonce: 'n' }, { redactAddresses: false });
+  assert.equal(safe.address, 'kaspatest:abc');
+  assert.equal(safe.nonce, '<redacted>');
+});

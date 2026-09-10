@@ -13,6 +13,7 @@ import { NETWORK, PROTOCOL_VERSION, ProtocolError, validateGameId } from './prot
 import { noopMetrics } from './metrics.js';
 import { EphemeralPreparations } from './ephemeral-preparations.js';
 import { DEFAULT_WRPC_URL } from './wrpc.mjs';
+import { logger } from './logger.js';
 
 const MATCH_STAKE_KAS = 1;
 
@@ -36,10 +37,22 @@ export class BackendGameService {
     };
   }
 
+  // Wallet addresses are identity-sensitive and redacted by default. When
+  // LOG_WALLET_ADDRESSES=1 the logger reveals them; this helper keeps call sites
+  // silent (no `<redacted>` noise) unless an operator explicitly opted in.
+  #logPlayer(event, address, fields = {}) {
+    if (process.env.LOG_WALLET_ADDRESSES !== '1') return;
+    logger.info(event, { address, ...fields });
+  }
+
   async joinMatchmaking(input) {
     const address = this.#matchmakingAddress(input.address);
     const publicKey = normalizePublicKey(input.publicKey, 'matchmaking public key');
     const match = await this.store.joinMatchmaking({ matchId: randomUUID(), address, publicKey });
+    this.#logPlayer('matchmaking_join', address, { matchId: match.matchId, status: match.status });
+    if (match.status === 'matched' && match.players.length === 2) {
+      this.#logPlayer('matchmaking_paired', match.players[0].address, { matchId: match.matchId, opponentAddress: match.players[1].address });
+    }
     this.metrics.recordGameEvent('matchmaking_join');
     await this.#recordMatchmakingBacklog();
     return this.#matchResponse(match, address);
@@ -48,6 +61,7 @@ export class BackendGameService {
   async matchmakingStatus(matchId, address) {
     const match = await this.store.loadMatch(matchId);
     const playerAddress = this.#matchmakingAddress(address);
+    this.#logPlayer('matchmaking_status', playerAddress, { matchId });
     this.#matchPlayer(match, playerAddress);
     await this.store.touchMatch(matchId, playerAddress);
     return this.#matchResponse(await this.store.loadMatch(matchId), playerAddress);
@@ -55,6 +69,7 @@ export class BackendGameService {
 
   async submitMatchVote(matchId, input) {
     const address = this.#matchmakingAddress(input.address);
+    this.#logPlayer('matchmaking_vote', address, { matchId });
     const commitment = normalizeHex(input.commitment, 32, 'matchmaking commitment');
     const match = await this.store.loadMatch(matchId);
     const player = this.#matchPlayer(match, address);
@@ -72,6 +87,7 @@ export class BackendGameService {
 
   async leaveMatchmaking(matchId, address) {
     const playerAddress = this.#matchmakingAddress(address);
+    this.#logPlayer('matchmaking_leave', playerAddress, { matchId });
     const match = await this.store.loadMatch(matchId);
     this.#matchPlayer(match, playerAddress);
     await this.store.leaveMatch(matchId, playerAddress);
@@ -93,6 +109,7 @@ export class BackendGameService {
       stakeKas: input.stakeKas,
       feeSompi: 0n,
     });
+    this.#logPlayer('creation_prepare', request.creatorAddress, { matchId: input.matchId ?? null });
     const chain = this.#chain(request);
     const prepared = await chain.prepareCreation(request);
     const record = {
@@ -117,6 +134,7 @@ export class BackendGameService {
     }
     verifySignedCreationSafeJson({ preparedTxJson: prepared.txJson, signedTxJson, request, policy: prepared.policy });
     const transactionId = validateGameId(await this.rpc.submitSafeJson(signedTxJson));
+    this.#logPlayer('creation_submit', request.creatorAddress, { gameId: transactionId, matchId: matchId ?? null });
     await this.store.saveGame({
       gameId: transactionId,
       network: NETWORK,
@@ -146,6 +164,7 @@ export class BackendGameService {
     if (typeof input.joinerAddress !== 'string' || !input.joinerAddress.startsWith('kaspatest:')) {
       throw new ProtocolError('INVALID_ADDRESS', 'Player B must use a testnet address');
     }
+    this.#logPlayer('join_prepare', input.joinerAddress, { gameId: id, matchId: input.matchId ?? null });
     const { entry, currentDaaScore } = await this.#openCreationUtxo(id, request, creation);
     if (currentDaaScore >= request.deadlineDaa) throw new ProtocolError('GAME_EXPIRED', 'The joining deadline has passed');
 
@@ -217,6 +236,7 @@ export class BackendGameService {
     await this.#openCreationUtxo(id, request, creation);
     verifySignedJoinTransaction({ preparedTxJson: prepared.txJson, signedTxJson });
     const transactionId = validateGameId(await this.rpc.submitSafeJson(signedTxJson));
+    this.#logPlayer('join_submit', prepared.joinerAddress, { gameId: id, transactionId });
     await this.store.saveGame({
       ...gameRecord,
       status: 'join_broadcast',
@@ -246,6 +266,7 @@ export class BackendGameService {
     const request = deserializeRequest(gameRecord.request);
     const publicKey = normalizePublicKey(input.playerPublicKey, 'player public key');
     const player = this.#player(gameRecord, request, input.playerAddress, publicKey);
+    this.#logPlayer('reveal_prepare', player.address, { gameId: id, role: player.role });
     const choice = Number(input.choice);
     const nonceHex = normalizeHex(input.nonceHex, 32, 'reveal nonce');
     if (!Number.isInteger(choice) || (choice !== 0 && choice !== 1)) throw new ProtocolError('INVALID_REVEAL', 'Choice must be zero or one');
@@ -330,6 +351,7 @@ export class BackendGameService {
     if (!gameRecord?.join) throw new ProtocolError('GAME_NOT_JOINED', 'Player B has not joined this game');
     verifySignedTerminalTransaction({ prepared: { transaction: prepared.transaction }, signedTxJson });
     const transactionId = validateGameId(await this.rpc.submitSafeJson(signedTxJson));
+    this.#logPlayer('reveal_submit', prepared.playerAddress, { gameId: id, transactionId, role: prepared.role });
     const reveal = {
       transactionId,
       preparedHash,
@@ -363,6 +385,7 @@ export class BackendGameService {
     const player = action === 'creator_refund' && !gameRecord.join
       ? this.#creator(request, input.playerAddress, publicKey)
       : this.#player(gameRecord, request, input.playerAddress, publicKey);
+    this.#logPlayer(`${action}_prepare`, player.address, { gameId: id, role: player.role });
     const confirmedReveals = (gameRecord.reveals ?? []).filter((item) => item.status === 'confirmed');
     const confirmedRefunds = (gameRecord.safetyActions ?? []).filter((item) => item.action === 'refund_player' && item.status === 'confirmed');
     let current;
@@ -454,6 +477,7 @@ export class BackendGameService {
     const gameRecord = await this.store.loadGame(id);
     verifySignedTerminalTransaction({ prepared: { transaction: prepared.transaction }, signedTxJson });
     const transactionId = validateGameId(await this.rpc.submitSafeJson(signedTxJson));
+    this.#logPlayer(`${action}_submit`, prepared.playerAddress, { gameId: id, transactionId, role: prepared.role });
     const terminal = {
       action, transactionId, preparedHash, playerAddress: prepared.playerAddress, role: prepared.role,
       status: 'broadcast', continuationAddress: prepared.continuationAddress,

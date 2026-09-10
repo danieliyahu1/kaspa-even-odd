@@ -183,7 +183,10 @@ Runtime details:
   `LOG_FORMAT` (`text` or `json`). Each request logs its method, route template,
   status, duration, and any protocol error code/message. Logs never contain
   request bodies, wallet addresses, keys, nonces, signatures, or transaction
-  ids. In the browser, add `?debug=1` (or set `localStorage['kaspa-debug'] = '1'`)
+  ids. For a debug session only, `LOG_WALLET_ADDRESSES=1` reveals full wallet
+  addresses on every server operation while still redacting keys, nonces,
+  signatures, commitments, and bodies; leave it unset in production. In the
+  browser, add `?debug=1` (or set `localStorage['kaspa-debug'] = '1'`)
   for verbose `[even-odd]` console tracing of the wallet flow; warnings and
   errors are always printed.
 
