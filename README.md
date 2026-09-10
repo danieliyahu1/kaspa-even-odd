@@ -66,8 +66,10 @@ secret, commitment preimage, wallet key, or transaction template.
 
 ## Pinned Even/Odd covenant (testnet-10)
 
-The canonical testnet covenant artifact is compiled by `silverc` 0.1.0 from
-`covenant/even_odd.sil` into `covenant/even_odd.template.artifact.json`:
+The canonical testnet covenant artifact is compiled by the `silverc` binary
+from SilverScript `v1.0.0` (whose emitted artifact/compiler identifier remains
+`0.1.0`) from `covenant/even_odd.sil` into
+`covenant/even_odd.template.artifact.json`:
 
 - **contract**: `EvenOdd`, template hash `8c8d50e0…98249`
 - **state span**: `offset 1, len 219` (11 fields: `creator_hash`,
@@ -79,8 +81,9 @@ The canonical testnet covenant artifact is compiled by `silverc` 0.1.0 from
   `refund_player = 7e21ac29`
 - **P2SH-256**: `0xaa 0x20 <blake2b-256(redeemScript)>`; address prefix
   `kaspatest`, version byte 8.
-- **reproducibility manifest**: `covenant/pins.json` pins the SilverScript source
-  commit plus source, artifact, and local Windows compiler SHA-256 values.
+- **reproducibility manifest**: `covenant/pins.json` pins the SilverScript
+  release, source commit, emitted compiler version, plus source, artifact, and
+  local Windows compiler SHA-256 values.
 
 The ABI, state layout, compiler revision, covenant artifact, Rusty Kaspa v2.0.1
 WASM release checksum, fee-input selection, and fee-rate policy are all pinned
@@ -97,7 +100,7 @@ npm run check
 ```
 
 `silverscript/` is a pinned git submodule (upstream `kaspanet/silverscript` at
-`v1-rc1`). The `covenant-oracle-runtime` tests need its `silverscript-abi`
+`v1.0.0`). The `covenant-oracle-runtime` tests need its `silverscript-abi`
 crate, so initialize the submodule and build the standalone oracle before
 running them:
 

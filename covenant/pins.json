@@ -1,9 +1,10 @@
 {
   "schemaVersion": 1,
   "silverscript": {
-    "sourceCommit": "c7d17a15ac88610d013ec9ffffa9520aeb69929b",
+    "release": "v1.0.0",
+    "sourceCommit": "3ed973335b59269293564805cc2c58a14595ec03",
     "compilerVersion": "0.1.0",
-    "windowsX64CompilerSha256": "2104b9792d9e6333afddc2f4300f502d3010ead052094696e66af1dfa947ac8e"
+    "windowsX64CompilerSha256": "ce1e0ef5f1f415f371d3d2426e788597a388635da8cbe93e72e95a4f754b29af"
   },
   "covenant": {
     "source": "covenant/even_odd.sil",

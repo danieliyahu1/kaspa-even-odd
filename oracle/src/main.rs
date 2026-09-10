@@ -66,8 +66,8 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    if let Err(e) = abi.verify() {
-        eprintln!("error: artifact verify: {e}");
+    if let Err(e) = abi.check_consistency() {
+        eprintln!("error: artifact check_consistency: {e}");
         return ExitCode::FAILURE;
     }
 

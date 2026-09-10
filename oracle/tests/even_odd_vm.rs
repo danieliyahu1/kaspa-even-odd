@@ -249,7 +249,7 @@ where
 fn artifact() -> SilAbiArtifact {
     let raw = fs::read_to_string("../covenant/even_odd.template.artifact.json").expect("artifact readable");
     let artifact: SilAbiArtifact = serde_json::from_str(&raw).expect("artifact parses");
-    artifact.verify().expect("artifact verifies");
+    artifact.check_consistency().expect("artifact is consistent");
     artifact
 }
 

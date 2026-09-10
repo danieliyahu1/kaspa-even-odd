@@ -79,6 +79,14 @@ test('reproducibility manifest matches covenant source and artifact bytes', () =
   assert.equal(pins.rustyKaspa.status, 'pinned');
 });
 
+test('pinned SilverScript release matches the loaded artifact', () => {
+  const pins = JSON.parse(readFileSync(new URL('../covenant/pins.json', import.meta.url), 'utf8'));
+  assert.equal(pins.silverscript.release, 'v1.0.0');
+  assert.equal(pins.silverscript.sourceCommit, '3ed973335b59269293564805cc2c58a14595ec03');
+  assert.equal(pins.silverscript.compilerVersion, '0.1.0');
+  assert.equal(EVEN_ODD_TEMPLATE.compilerVersion, pins.silverscript.compilerVersion);
+});
+
 test('per-game instance matches the covenant-oracle P2SH address', () => {
   const creatorPubkey = new Array(32).fill(7);
   const creatorCommit = new Array(32).fill(9);
