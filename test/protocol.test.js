@@ -4,7 +4,7 @@ import { parseInvite, serializeInvite } from '../src/invite.js';
 import { MemoryGameStore, prepareCreateGame } from '../src/create-game.js';
 import { ProtocolError, stakeToSompi } from '../src/protocol.js';
 import { KaspaCreationConfirmer, submitSignedTransaction } from '../src/kaspa-adapter.js';
-import { KastleWalletAdapter, waitForKastleProvider } from '../src/kastle-wallet.js';
+import { KaswareWalletAdapter, waitForKaswareProvider } from '../src/kasware-wallet.js';
 import { createGenesisGameOutput } from '../src/genesis-transaction.js';
 
 const valid = {
@@ -97,50 +97,72 @@ test('submits through the Rusty Kaspa v2 object-shaped RPC boundary', async () =
   assert.equal(txid, 'tx-2');
 });
 
-test('connects supported Kastle and signs exact prepared SafeJSON', async () => {
+test('connects supported KasWare and signs exact prepared SafeJSON', async () => {
   const listeners = new Map();
   const provider = {
-    connect: async () => true,
-    getAccount: async () => ({ address: valid.creatorAddress, publicKey: 'public-key' }),
-    getNetwork: async () => 'testnet-10',
-    getVersion: async () => '2.59.8',
-    signTx: async (network, txJson) => { assert.equal(network, 'testnet-10'); assert.equal(txJson, 'unsigned'); return 'signed'; },
+    requestAccounts: async () => [valid.creatorAddress],
+    getPublicKey: async () => `02${'ab'.repeat(32)}`,
+    getNetwork: async () => 'kaspa_testnet_10',
+    getAccounts: async () => [valid.creatorAddress],
+    signPskt: async (request) => { assert.equal(request.txJsonString, 'unsigned'); return 'signed'; },
     on: (event, handler) => listeners.set(event, handler),
     removeListener: (event) => listeners.delete(event),
   };
-  const wallet = new KastleWalletAdapter(provider);
-  await wallet.connect();
+  const wallet = new KaswareWalletAdapter(provider);
+  const account = await wallet.connect();
+  assert.equal(account.publicKey, 'ab'.repeat(32));
   const result = await wallet.sign({ network: 'testnet-10', creatorAddress: valid.creatorAddress, txJson: 'unsigned', preparedHash: 'hash' });
   assert.equal(result, 'signed');
-  listeners.get('networkChanged')('mainnet');
+  listeners.get('networkChanged')('kaspa_mainnet');
   await assert.rejects(() => wallet.sign({ network: 'testnet-10', creatorAddress: valid.creatorAddress, txJson: 'unsigned', preparedHash: 'hash' }), { code: 'WALLET_CHANGED' });
   wallet.dispose();
 });
 
-test('rejects outdated Kastle versions', async () => {
-  const wallet = new KastleWalletAdapter({
-    connect: async () => true,
-    getAccount: async () => ({ address: valid.creatorAddress, publicKey: 'public-key' }),
-    getNetwork: async () => 'testnet-10',
-    getVersion: async () => '2.59.7',
+test('requests a KasWare network switch when the wallet is on another network', async () => {
+  let network = 'kaspa_mainnet';
+  const switches = [];
+  const provider = {
+    requestAccounts: async () => [valid.creatorAddress],
+    getPublicKey: async () => 'ab'.repeat(32),
+    getNetwork: async () => network,
+    switchNetwork: async (next) => { switches.push(next); network = next; },
+    getAccounts: async () => [valid.creatorAddress],
+    signPskt: async () => 'signed',
+  };
+  const wallet = new KaswareWalletAdapter(provider);
+  const account = await wallet.connect();
+  assert.deepEqual(switches, ['kaspa_testnet_10']);
+  assert.equal(account.network, 'testnet-10');
+});
+
+test('rejects a KasWare connection that is not approved', async () => {
+  const wallet = new KaswareWalletAdapter({ requestAccounts: async () => [] });
+  await assert.rejects(() => wallet.connect(), { code: 'WALLET_REJECTED' });
+});
+
+test('rejects a KasWare account that does not support signing', async () => {
+  const wallet = new KaswareWalletAdapter({
+    requestAccounts: async () => [valid.creatorAddress],
+    getPublicKey: async () => 'ab'.repeat(32),
+    getNetwork: async () => 'kaspa_testnet_10',
   });
   await assert.rejects(() => wallet.connect(), { code: 'WALLET_UNSUPPORTED' });
 });
 
-test('detects late Kastle injection and rejects a mainnet account prefix', async () => {
+test('detects late KasWare injection and rejects a mainnet account prefix', async () => {
   let reads = 0;
-  const provider = { connect: async () => true };
-  assert.equal(await waitForKastleProvider({
+  const provider = { requestAccounts: async () => [valid.creatorAddress] };
+  assert.equal(await waitForKaswareProvider({
     getProvider: () => (++reads === 2 ? provider : undefined),
     wait: async () => {},
   }), provider);
 
-  const wallet = new KastleWalletAdapter({
-    connect: async () => true,
-    getAccount: async () => ({ address: 'kaspa:mainnet', publicKey: 'public-key' }),
-    getNetwork: async () => 'testnet-10',
-    getVersion: async () => '2.59.8',
-    signTx: async () => 'signed',
+  const wallet = new KaswareWalletAdapter({
+    requestAccounts: async () => ['kaspa:mainnet'],
+    getPublicKey: async () => 'ab'.repeat(32),
+    getNetwork: async () => 'kaspa_testnet_10',
+    getAccounts: async () => ['kaspa:mainnet'],
+    signPskt: async () => 'signed',
   });
   await assert.rejects(() => wallet.connect(), { code: 'WALLET_ACCOUNT_MISMATCH' });
 });

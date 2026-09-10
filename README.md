@@ -14,7 +14,7 @@ secret, commitment preimage, wallet key, or transaction template.
 - `src/invite.js` parses and serializes the URL invite.
 - `src/create-game.js` validates the creation intent, requires a chain service
   to prepare and verify Rusty Kaspa v2 SafeJSON, delegates signing only to
-  Kastle, checkpoints the non-secret lifecycle for recovery, and shares the
+  KasWare, checkpoints the non-secret lifecycle for recovery, and shares the
   confirmed transaction ID only after authoritative revalidation.
 - `src/join-game.js` parses direct invites, re-reads confirmed game state,
   enforces the joining deadline and exact matching stake, and checkpoints the
@@ -48,14 +48,14 @@ secret, commitment preimage, wallet key, or transaction template.
   external transactions, and provides memory and durable JSON recovery stores.
 - `src/backend-game-service.js` exposes the browser boundary for live creation:
   it derives deadlines from testnet-10 DAA state, prepares from live UTXOs and
-  fees, verifies Kastle SafeJSON, submits over wRPC, and checks confirmation.
+  fees, verifies KasWare SafeJSON, submits over wRPC, and checks confirmation.
 - `src/backend-game-store.js` persists non-secret preparation and game metadata
   on disk. The browser does not create identities or simulate game state.
 - `src/wasm-transaction.js` loads the pinned WASM SDK (`Transaction`,
   `GenesisCovenantGroup`, `populateGenesisCovenants`, `serializeToSafeJSON`)
-  and rejects any Kastle mutation of sighash-relevant fields.
+  and rejects any wallet mutation of sighash-relevant fields.
 - `src/genesis-transaction.js` computes the Rusty Kaspa v2 covenant ID,
-  constructs output zero, proves exact fee separation, and rejects any Kastle
+  constructs output zero, proves exact fee separation, and rejects any wallet
   SafeJSON mutation outside input signature scripts.
 - The Rust `covenant-oracle` (`oracle/`, built from the pinned rusty-kaspa
   v2.0.1 rev `a41a333b…`) is a real-runtime regression oracle for the P2SH-256
@@ -198,13 +198,13 @@ backend to move funds:
 - `src/client-actions.mjs` builds create/join/reveal/refund/claim transactions
   locally; `src/wrpc.mjs` is the isomorphic wRPC client used to read UTXOs/DAA
   and broadcast.
-- `public/game-client.js` orchestrates build → sign (Kastle) → broadcast,
+- `public/game-client.js` orchestrates build → sign (KasWare) → broadcast,
   persists non-secret game metadata in IndexedDB, and re-verifies any relayed
   opponent data on-chain before use.
 - `public/secrets.js` stores each game's hidden number in IndexedDB using a
   fresh 32-byte `crypto.getRandomValues` nonce (saved before funds are locked).
 - `public/verify.js` independently re-derives the covenant and checks the
-  prepared creation output before Kastle is asked to sign.
+  prepared creation output before KasWare is asked to sign.
 
 The invite URL (`/join?v=…&game=…&pk=…&c=…&s=…&k=…&d=…&a=…`) carries the full
 non-secret creation state so a joiner can rebuild the covenant without the

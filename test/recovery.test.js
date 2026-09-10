@@ -4,7 +4,7 @@ import { mkdtemp, readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { bindWalletRecovery, classifyTransaction, createRecoveryLogger, JsonRecoveryStore, MemoryRecoveryStore, projectRecoveryState, reconstructGameState, reduceGameHistory, recoverAndCheckpoint, sanitizeRecord } from '../src/recovery.js';
-import { KastleWalletAdapter } from '../src/kastle-wallet.js';
+import { KaswareWalletAdapter } from '../src/kasware-wallet.js';
 
 test('classifies only authoritative one-confirmed transactions as confirmed', () => {
   assert.equal(classifyTransaction({ status: 'observed' }), 'pending');
@@ -61,16 +61,16 @@ test('recovery stores never persist secrets and JSON storage survives reload', a
 test('wallet changes notify the application so permissions can be cleared', async () => {
   const listeners = new Map();
   const provider = {
-    connect: async () => true,
-    getAccount: async () => ({ address: 'kaspatest:player', publicKey: 'key' }),
-    getNetwork: async () => 'testnet-10',
-    getVersion: async () => '2.59.8',
-    signTx: async () => '{}',
+    requestAccounts: async () => ['kaspatest:player'],
+    getPublicKey: async () => 'ab'.repeat(32),
+    getNetwork: async () => 'kaspa_testnet_10',
+    getAccounts: async () => ['kaspatest:player'],
+    signPskt: async () => '{}',
     on: (event, listener) => listeners.set(event, listener),
     removeListener: () => {},
   };
   const changes = [];
-  const wallet = new KastleWalletAdapter(provider, { onChange: (change) => changes.push(change) });
+  const wallet = new KaswareWalletAdapter(provider, { onChange: (change) => changes.push(change) });
   await wallet.connect();
   listeners.get('accountsChanged')(['kaspatest:other']);
   assert.deepEqual(changes, [{ reason: 'account', account: null, network: null }]);

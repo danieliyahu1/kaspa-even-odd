@@ -513,7 +513,7 @@ export class BackendGameService {
     if (address === record.join.joinerAddress && publicKey === record.join.joinerPublicKey) {
       return { role: 'joiner', address, publicKey, commitment: record.join.joinerCommitment };
     }
-    throw new ProtocolError('NOT_A_PLAYER', 'The connected Kastle account is not a player in this game');
+    throw new ProtocolError('NOT_A_PLAYER', 'The connected KasWare account is not a player in this game');
   }
 
   #creator(request, address, publicKey) {

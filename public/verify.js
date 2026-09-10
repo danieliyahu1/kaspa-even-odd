@@ -1,7 +1,7 @@
 // Client-side transaction verification for Even/Odd.
 //
 // The backend may prepare a transaction, but it must never be trusted with
-// intent. Before Kastle is asked to sign, the browser independently recomputes
+// intent. Before KasWare is asked to sign, the browser independently recomputes
 // the covenant instance from the player's own commitment, side, and stake and
 // checks that the prepared transaction locks the exact expected covenant
 // output. A mismatched commitment, side, stake, or covenant binding is refused

@@ -58,10 +58,10 @@ export function verifySignedJoinTransaction({ preparedTxJson, signedTxJson }) {
   const prepared = JSON.parse(preparedTxJson);
   const signed = JSON.parse(signedTxJson);
   if (signed.inputs[0]?.signatureScript !== prepared.inputs[0]?.signatureScript) {
-    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Kastle changed the covenant invocation');
+    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Wallet changed the covenant invocation');
   }
   if (signed.inputs.slice(1).some((input) => typeof input.signatureScript !== 'string' || input.signatureScript.length === 0)) {
-    throw new ProtocolError('SIGNING_FAILED', 'Kastle did not sign every Player B funding input');
+    throw new ProtocolError('SIGNING_FAILED', 'Wallet did not sign every Player B funding input');
   }
   return signedTxJson;
 }

@@ -64,7 +64,7 @@ test('rejects fee substitution, covenant fee inputs, and redirected change', () 
   assert.throws(() => validateCreationTransaction(JSON.stringify(redirected), request, { authorizingInput: 0, changeScriptPublicKey: '000051' }), { code: 'INVALID_TRANSACTION' });
 });
 
-test('allows only signature-script changes in Kastle SafeJSON', () => {
+test('allows only signature-script changes in wallet SafeJSON', () => {
   const prepared = tx({ inputAmount: request.stakeSompi + request.feeSompi });
   const signed = structuredClone(prepared);
   signed.inputs[0].signatureScript = '01aa';

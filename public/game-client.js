@@ -447,7 +447,7 @@ export async function waitForCovenant(rpc, { address, transactionId, index, valu
 
 async function signAndVerify(wallet, txJson) {
   const signed = await wallet.signTx(txJson);
-  if (!signed) throw new Error('Kastle did not return a signed transaction');
+  if (!signed) throw new Error('KasWare did not return a signed transaction');
   verifyWasmSignedSafeJson({ preparedTxJson: txJson, signedTxJson: signed, policy: {} });
   return signed;
 }

@@ -3,9 +3,10 @@ import { verifyCreation } from '/verify.js';
 import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame } from '/game-client.js';
 
 const NETWORK = 'testnet-10';
+const KASWARE_NETWORK = 'kaspa_testnet_10';
 const app = document.querySelector('#app');
 const params = new URLSearchParams(location.search);
-const KASTLE_DOWNLOAD = 'https://kastle.app';
+const KASWARE_DOWNLOAD = 'https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf';
 
 boot();
 
@@ -60,7 +61,7 @@ async function renderMatchmaking() {
     const button = document.querySelector('#match-start');
     button.disabled = true;
     try {
-      ({ provider, account } = await connectKastle('#matchmaking-content'));
+      ({ provider, account } = await connectKasware('#matchmaking-content'));
       rememberAddress(account.address);
       match = await api('/api/matchmaking/join', { method: 'POST', body: { address: account.address, publicKey: account.publicKey } });
       renderMatchState();
@@ -174,9 +175,9 @@ async function renderMatchmaking() {
         matchId: match.matchId,
       } });
       await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side: match.side, stakeKas: 1, deadlineDaa: prepared.deadlineDaa });
-      showNotice('#matchmaking-content', 'Confirm in Kastle', `Approve the ${match.stakeKas} KAS transaction.`, '');
-      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
-      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
+      showNotice('#matchmaking-content', 'Confirm in KasWare', `Approve the ${match.stakeKas} KAS transaction.`, '');
+      const signedTxJson = await signWithKasware(provider, prepared.txJson);
+      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       const game = await api('/api/games/submit', { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson, matchId: match.matchId } });
       await bindSecretToGame(game.gameId, secret.secretId);
       location.href = `/game?id=${game.gameId}`;
@@ -197,9 +198,9 @@ async function renderMatchmaking() {
         joinerCommitment: secret.commitment,
         matchId: match.matchId,
       } });
-      showNotice('#matchmaking-content', 'Confirm in Kastle', `Approve the ${match.stakeKas} KAS transaction.`, '');
-      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
-      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
+      showNotice('#matchmaking-content', 'Confirm in KasWare', `Approve the ${match.stakeKas} KAS transaction.`, '');
+      const signedTxJson = await signWithKasware(provider, prepared.txJson);
+      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       await api(`/api/games/${match.gameId}/join/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
       location.href = `/game?id=${match.gameId}`;
     } catch (error) {
@@ -318,10 +319,10 @@ function renderCreate() {
     if (number === null) return showNotice('#create-notice', 'Pick a number', 'Choose 1 or 2 before you play.', 'error');
     submit.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#create-notice');
+      const { provider, account } = await connectKasware('#create-notice');
       rememberAddress(account.address);
-      showNotice('#create-notice', 'Locking your stake', 'Confirm the transaction in Kastle.', '');
-      const result = await createGame({ wallet: kastleWallet(provider, account), side, number, stakeKas: stake, rpcUrl: preferredRpcUrl() });
+      showNotice('#create-notice', 'Locking your stake', 'Confirm the transaction in KasWare.', '');
+      const result = await createGame({ wallet: kaswareWallet(provider, account), side, number, stakeKas: stake, rpcUrl: preferredRpcUrl() });
       location.href = `/game?id=${result.gameId}`;
     } catch (error) {
       submit.disabled = false;
@@ -404,7 +405,7 @@ async function bindJoin(gameId, game) {
     if (number === null) return showNotice('#join-notice', 'Pick a number', 'Choose 1 or 2 before you join.', 'error');
     submit.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#join-notice');
+      const { provider, account } = await connectKasware('#join-notice');
       rememberAddress(account.address);
       const secret = await createRevealSecret(number);
       await bindSecretToGame(gameId, secret.secretId);
@@ -413,9 +414,9 @@ async function bindJoin(gameId, game) {
         joinerPublicKey: account.publicKey,
         joinerCommitment: secret.commitment,
       } });
-      showNotice('#join-notice', 'Confirm in Kastle', `Match ${theirStake} KAS. Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
-      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
-      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
+      showNotice('#join-notice', 'Confirm in KasWare', `Match ${theirStake} KAS. Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
+      const signedTxJson = await signWithKasware(provider, prepared.txJson);
+      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       await api(`/api/games/${gameId}/join/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
       await refreshGame(gameId);
     } catch (error) {
@@ -506,10 +507,10 @@ function renderClientJoin(gameId, creation) {
     if (number === null) return showNotice('#join-notice', 'Pick a number', 'Choose 1 or 2 before you join.', 'error');
     submit.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#join-notice');
+      const { provider, account } = await connectKasware('#join-notice');
       rememberAddress(account.address);
-      showNotice('#join-notice', 'Matching the stake', 'Confirm the transaction in Kastle.', '');
-      await joinGame({ wallet: kastleWallet(provider, account), gameId, creation, number, rpcUrl: preferredRpcUrl() });
+      showNotice('#join-notice', 'Matching the stake', 'Confirm the transaction in KasWare.', '');
+      await joinGame({ wallet: kaswareWallet(provider, account), gameId, creation, number, rpcUrl: preferredRpcUrl() });
       location.href = `/game?id=${gameId}`;
     } catch (error) {
       submit.disabled = false;
@@ -549,10 +550,10 @@ async function renderClientGame(gameId, record) {
   document.querySelector('[data-action="client-reveal"]')?.addEventListener('click', async (event) => {
     event.target.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#client-notice');
+      const { provider, account } = await connectKasware('#client-notice');
       rememberAddress(account.address);
-      showNotice('#client-notice', 'Revealing', 'Confirm the transaction in Kastle.', '');
-      await clientReveal({ wallet: kastleWallet(provider, account), gameId, rpcUrl: preferredRpcUrl() });
+      showNotice('#client-notice', 'Revealing', 'Confirm the transaction in KasWare.', '');
+      await clientReveal({ wallet: kaswareWallet(provider, account), gameId, rpcUrl: preferredRpcUrl() });
       location.reload();
     } catch (error) {
       event.target.disabled = false;
@@ -562,10 +563,10 @@ async function renderClientGame(gameId, record) {
   document.querySelector('[data-action="client-recover"]')?.addEventListener('click', async (event) => {
     event.target.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#client-notice');
+      const { provider, account } = await connectKasware('#client-notice');
       rememberAddress(account.address);
-      showNotice('#client-notice', 'Recovering', 'Confirm the transaction in Kastle.', '');
-      const result = await refundOrClaim({ wallet: kastleWallet(provider, account), gameId, rpcUrl: preferredRpcUrl() });
+      showNotice('#client-notice', 'Recovering', 'Confirm the transaction in KasWare.', '');
+      const result = await refundOrClaim({ wallet: kaswareWallet(provider, account), gameId, rpcUrl: preferredRpcUrl() });
       showNotice('#client-notice', 'Submitted', `${result.action} broadcast.`, '');
       location.reload();
     } catch (error) {
@@ -606,11 +607,15 @@ function clientInviteUrl(gameId, record) {
   return url.toString();
 }
 
-function kastleWallet(provider, account) {
+function signWithKasware(provider, txJson) {
+  return provider.signPskt({ txJsonString: txJson });
+}
+
+function kaswareWallet(provider, account) {
   return {
     address: account.address,
     publicKey: account.publicKey,
-    signTx: (txJson) => provider.signTx(NETWORK, txJson),
+    signTx: (txJson) => signWithKasware(provider, txJson),
   };
 }
 
@@ -708,7 +713,7 @@ function bindReveal(gameId) {
   reveal.addEventListener('click', async () => {
     reveal.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#reveal-notice');
+      const { provider, account } = await connectKasware('#reveal-notice');
       rememberAddress(account.address);
       const secret = await loadSecretForGame(gameId);
       if (!secret) {
@@ -722,9 +727,9 @@ function bindReveal(gameId) {
         choice: secret.choice,
         nonceHex: secret.nonceHex,
       } });
-      showNotice('#reveal-notice', 'Confirm in Kastle', `Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
-      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
-      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
+      showNotice('#reveal-notice', 'Confirm in KasWare', `Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
+      const signedTxJson = await signWithKasware(provider, prepared.txJson);
+      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       await api(`/api/games/${gameId}/reveal/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
       await refreshGame(gameId);
     } catch (error) {
@@ -800,14 +805,14 @@ function bindSafety(gameId, game) {
   safetyButton.addEventListener('click', async () => {
     safetyButton.disabled = true;
     try {
-      const { provider, account } = await connectKastle('#game-safety');
+      const { provider, account } = await connectKasware('#game-safety');
       const prepared = await api(`/api/games/${gameId}/${game.safetyAction}/prepare`, { method: 'POST', body: {
         playerAddress: account.address,
         playerPublicKey: account.publicKey,
       } });
-      showNotice('#game-safety', 'Confirm in Kastle', `Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
-      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
-      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
+      showNotice('#game-safety', 'Confirm in KasWare', `Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
+      const signedTxJson = await signWithKasware(provider, prepared.txJson);
+      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       await api(`/api/games/${gameId}/${game.safetyAction}/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
       await refreshGame(gameId);
     } catch (error) {
@@ -896,20 +901,40 @@ async function refreshGame(gameId) {
   }
 }
 
-async function connectKastle(selector) {
-  const provider = globalThis.kastle ?? globalThis.kastleWallet;
+async function connectKasware(selector) {
+  const provider = globalThis.kasware;
   if (!provider) {
-    showNotice(selector, 'Install Kastle to play', 'Even/Odd uses the Kastle wallet.', 'error');
-    throw new Error(`Kastle wallet extension is required. Get it at ${KASTLE_DOWNLOAD}`);
+    showNotice(selector, 'Install KasWare to play', 'Even/Odd uses the KasWare wallet.', 'error');
+    throw new Error(`KasWare wallet extension is required. Get it at ${KASWARE_DOWNLOAD}`);
   }
-  showNotice(selector, 'Connecting to Kastle', 'Confirm the connection in your wallet.', '');
-  if (await provider.connect() === false) throw new Error('Kastle connection was not approved');
-  const [account, network] = await Promise.all([provider.getAccount(), provider.getNetwork()]);
-  if (network !== NETWORK) throw new Error(`Switch Kastle to ${NETWORK}`);
-  if (!account?.address?.startsWith('kaspatest:') || !/^[0-9a-f]{64}$|^(02|03)[0-9a-f]{64}$/i.test(account?.publicKey ?? '')) throw new Error('Kastle did not return a valid testnet account');
-  account.publicKey = account.publicKey.length === 66 ? account.publicKey.slice(2) : account.publicKey;
-  if (typeof provider.signTx !== 'function') throw new Error('Kastle transaction signing is unavailable');
-  return { provider, account };
+  showNotice(selector, 'Connecting to KasWare', 'Confirm the connection in your wallet.', '');
+  const accounts = await provider.requestAccounts().catch(() => null);
+  const address = Array.isArray(accounts) ? accounts[0] : accounts;
+  if (!address) throw new Error('KasWare connection was not approved');
+  let publicKey = await provider.getPublicKey();
+  let network = await provider.getNetwork();
+  if (network !== KASWARE_NETWORK) {
+    if (typeof provider.switchNetwork !== 'function') throw new Error(`Switch KasWare to ${NETWORK}`);
+    await provider.switchNetwork(KASWARE_NETWORK);
+    network = await provider.getNetwork();
+    if (network !== KASWARE_NETWORK) throw new Error(`Switch KasWare to ${NETWORK}`);
+  }
+  if (!address.startsWith('kaspatest:') || !/^[0-9a-f]{64}$|^(02|03)[0-9a-f]{64}$/i.test(publicKey ?? '')) throw new Error('KasWare did not return a valid testnet account');
+  if (publicKey.length === 66) publicKey = publicKey.slice(2);
+  if (typeof provider.signPskt !== 'function') throw new Error('KasWare transaction signing is unavailable');
+  watchKasware(provider);
+  return { provider, account: { address, publicKey } };
+}
+
+function watchKasware(provider) {
+  if (window.__kaswareWatched || typeof provider.on !== 'function') return;
+  window.__kaswareWatched = true;
+  const forget = () => {
+    window.__connectedAddress = undefined;
+    try { localStorage.removeItem('kaspa-connected-address'); } catch { /* ignore */ }
+  };
+  provider.on('accountsChanged', forget);
+  provider.on('networkChanged', forget);
 }
 
 function renderBackendError(message) {

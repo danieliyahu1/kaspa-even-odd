@@ -171,10 +171,10 @@ export function verifyWasmSignedSafeJson({ preparedTxJson, signedTxJson, policy 
   const prepared = parseWasmSafeJson(preparedTxJson);
   const signed = parseWasmSafeJson(signedTxJson);
   if (stableJson(withoutSignatures(prepared)) !== stableJson(withoutSignatures(signed))) {
-    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Kastle changed fields outside input signature scripts');
+    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Wallet changed fields outside input signature scripts');
   }
   if (!signed.inputs.some((input) => typeof input.signatureScript === 'string' && input.signatureScript.length > 0)) {
-    throw new ProtocolError('SIGNING_FAILED', 'Kastle returned no input signatures');
+    throw new ProtocolError('SIGNING_FAILED', 'Wallet returned no input signatures');
   }
   return signedTxJson;
 }

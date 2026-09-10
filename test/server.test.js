@@ -90,6 +90,9 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(secretsSource, /indexedDB/);
   assert.doesNotMatch(secretsSource, /fill\(1\)|FIXED_NONCE/);
   assert.match(browserSource, /verifyCreation\(/);
+  assert.match(browserSource, /connectKasware/);
+  assert.match(browserSource, /signPskt/);
+  assert.doesNotMatch(browserSource, /kastle/i);
 
   const modulePaths = [
     '/game-client.js',
@@ -104,6 +107,7 @@ test('server serves the browser application and health probe', async (t) => {
     '/src/reveal.js',
     '/src/wasm-transaction.js',
     '/src/fee-policy.js',
+    '/src/kasware-wallet.js',
     '/src/hashes/blake2b.mjs',
     '/src/hashes/blake3.mjs',
     '/src/hashes/bech32.mjs',

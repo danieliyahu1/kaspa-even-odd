@@ -4,7 +4,7 @@ export * from './covenant-artifact.js';
 export * from './genesis-transaction.js';
 export * from './create-game.js';
 export * from './kaspa-adapter.js';
-export * from './kastle-wallet.js';
+export * from './kasware-wallet.js';
 export * from './terminal-actions.js';
 export * from './terminal-transactions.js';
 export * from './terminal-lifecycle.js';
