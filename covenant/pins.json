@@ -23,6 +23,9 @@
     "wasmReleaseSha256": "7eaffac9cd920ef2fdf540c6e10f2a2b7761170ebc62ec57dfa0f71c64567a71",
     "vendoredWasmFileSha256": "9427733cb0cb1c78cc3f2cc9f77f4153426636925ced0256c5c30e4edc199eaa",
     "vendored": "vendor/kaspa-wasm32-sdk/v2.0.1/nodejs/kaspa",
+    "webVendored": "vendor/kaspa-wasm32-sdk/v2.0.1/web/kaspa",
+    "webVendoredJsSha256": "82202df28a83b6da08a4fa4a9184b9ad4ef0185d9d9df333544cf7c17013daca",
+    "webVendoredWasmFileSha256": "5f90736c80721027ecea1a51509005ebb37a434857fb4882ff03b20b24b923a9",
     "status": "pinned"
   }
 }
