@@ -1,0 +1,26 @@
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kaspa-even-odd
+  namespace: kaspa-even-odd
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: kaspa-even-odd
+  # Ingress is locked down: public traffic reaches the app port directly through
+  # the environment routing layer, and only the observability namespace may
+  # scrape the internal metrics port. Egress is left unrestricted because the
+  # Kaspa wRPC endpoint is resolved dynamically at runtime.
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - port: 3000
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - port: 9464
+          protocol: TCP

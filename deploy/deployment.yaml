@@ -5,8 +5,14 @@ metadata:
   namespace: kaspa-even-odd
   labels:
     app.kubernetes.io/name: kaspa-even-odd
+  annotations:
+    kaspa-even-odd/source-revision: sha-38ad9098f1a3a83b012f2ecc2752f91b2f164bca
 spec:
   replicas: 1
+  # The game store is a single JSON file with process-local write locking, so two
+  # pods must never share the RWO volume during a rollout.
+  strategy:
+    type: Recreate
   selector:
     matchLabels:
       app.kubernetes.io/name: kaspa-even-odd
@@ -15,11 +21,17 @@ spec:
       labels:
         app.kubernetes.io/name: kaspa-even-odd
     spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      nodeSelector:
+        kubernetes.io/arch: arm64
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
         fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: kaspa-even-odd
           image: ghcr.io/danieliyahu1/kaspa-even-odd/kaspa-even-odd:sha-38ad9098f1a3a83b012f2ecc2752f91b2f164bca
@@ -27,9 +39,13 @@ spec:
           ports:
             - name: http
               containerPort: 3000
+            - name: metrics
+              containerPort: 9464
           env:
             - name: PORT
               value: "3000"
+            - name: METRICS_PORT
+              value: "9464"
             - name: KASPA_NETWORK
               value: "testnet-10"
             - name: GAME_STORE_PATH
@@ -37,30 +53,44 @@ spec:
           volumeMounts:
             - name: game-state
               mountPath: /var/lib/kaspa-even-odd
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
           readinessProbe:
             httpGet:
               path: /readyz
               port: http
-            initialDelaySeconds: 5
+            initialDelaySeconds: 3
             periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
           livenessProbe:
             httpGet:
               path: /healthz
               port: http
-            initialDelaySeconds: 15
+            initialDelaySeconds: 10
             periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
           resources:
             requests:
               cpu: 50m
               memory: 128Mi
+              ephemeral-storage: 32Mi
             limits:
+              cpu: 500m
               memory: 256Mi
+              ephemeral-storage: 256Mi
           securityContext:
             allowPrivilegeEscalation: false
+            privileged: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop:
                 - ALL
-            readOnlyRootFilesystem: true
       volumes:
         - name: game-state
           persistentVolumeClaim:
