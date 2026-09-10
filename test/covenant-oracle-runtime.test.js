@@ -8,7 +8,11 @@ import { deriveGameInstance, EVEN_ODD_TEMPLATE } from '../src/covenant/even-odd.
 import { computeGenesisCovenantId } from '../src/genesis-transaction.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const ORACLE = join(__dirname, '..', 'oracle', 'target', 'release', 'covenant-oracle.exe');
+const ORACLE_CANDIDATES = [
+  join(__dirname, '..', 'oracle', 'target', 'release', 'covenant-oracle'),
+  join(__dirname, '..', 'oracle', 'target', 'release', 'covenant-oracle.exe'),
+];
+const ORACLE = process.env.ORACLE_BIN ?? ORACLE_CANDIDATES.find((candidate) => existsSync(candidate));
 const ARTIFACT = join(__dirname, '..', 'covenant', 'even_odd.template.artifact.json');
 
 const creatorPubkeyHex = '07'.repeat(32);
@@ -31,9 +35,9 @@ function parseOracle(output) {
   return values;
 }
 
-const oracleAvailable = existsSync(ORACLE);
+const oracleAvailable = Boolean(ORACLE) && existsSync(ORACLE);
 
-test('real Rust covenant-oracle (pinned v2.0.1) matches the JS covenant derivation', { skip: oracleAvailable ? false : 'covenant-oracle.exe not built' }, () => {
+test('real Rust covenant-oracle (pinned v2.0.1) matches the JS covenant derivation', { skip: oracleAvailable ? false : 'covenant-oracle binary not built; run `cargo build --release` in oracle/' }, () => {
   const oracle = parseOracle(runOracle());
   const inst = deriveGameInstance({
     creatorPubkey: Buffer.from(creatorPubkeyHex, 'hex'),
@@ -50,7 +54,7 @@ test('real Rust covenant-oracle (pinned v2.0.1) matches the JS covenant derivati
   assert.equal(oracle.state_span_ok, 'true');
 });
 
-test('real Rust covenant-oracle (pinned v2.0.1) yields the WASM-authoritative genesis covenant id', { skip: oracleAvailable ? false : 'covenant-oracle.exe not built' }, () => {
+test('real Rust covenant-oracle (pinned v2.0.1) yields the WASM-authoritative genesis covenant id', { skip: oracleAvailable ? false : 'covenant-oracle binary not built; run `cargo build --release` in oracle/' }, () => {
   const oracle = parseOracle(runOracle());
   const inst = deriveGameInstance({
     creatorPubkey: Buffer.from(creatorPubkeyHex, 'hex'),
