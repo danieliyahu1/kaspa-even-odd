@@ -4,11 +4,18 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BackendGameService } from './backend-game-service.js';
 import { BackendGameStore } from './backend-game-store.js';
-import { NETWORK, ProtocolError } from './protocol.js';
+import { NETWORK, PROTOCOL_VERSION, ProtocolError } from './protocol.js';
 import { WrpcClient } from './wrpc-client.js';
+import { Metrics, withRpcMetrics } from './metrics.js';
+import { RelayStore } from './relay-store.js';
+import { RateLimiter } from './rate-limit.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
+const metricsPort = Number.parseInt(process.env.METRICS_PORT ?? '9464', 10);
 const configuredNetwork = process.env.KASPA_NETWORK ?? NETWORK;
+const maxRequestBytes = Number.parseInt(process.env.MAX_REQUEST_BYTES ?? '1000000', 10);
+const rateLimitPerMinute = Number.parseInt(process.env.RATE_LIMIT_PER_MINUTE ?? '300', 10);
+const trustedProxy = process.env.TRUST_PROXY === 'true';
 const startedAt = new Date().toISOString();
 const publicRoot = fileURLToPath(new URL('../public/', import.meta.url));
 const sourceRoot = fileURLToPath(new URL('./', import.meta.url));
@@ -16,29 +23,64 @@ const covenantRoot = fileURLToPath(new URL('../covenant/', import.meta.url));
 const vendorRoot = fileURLToPath(new URL('../vendor/', import.meta.url));
 const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm' };
 
-if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer between 1 and 65535');
+if (!isPort(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer between 1 and 65535');
+if (!isPort(metricsPort) || metricsPort < 1 || metricsPort > 65535 || metricsPort === port) throw new Error('METRICS_PORT must be a valid port distinct from PORT');
 if (configuredNetwork !== NETWORK) throw new Error(`KASPA_NETWORK must be ${NETWORK}`);
+if (!Number.isInteger(maxRequestBytes) || maxRequestBytes < 1) throw new Error('MAX_REQUEST_BYTES must be a positive integer');
+if (!Number.isInteger(rateLimitPerMinute) || rateLimitPerMinute < 1) throw new Error('RATE_LIMIT_PER_MINUTE must be a positive integer');
 
-const rpc = new WrpcClient({ network: configuredNetwork });
-const gameService = new BackendGameService({
-  rpc,
-  store: new BackendGameStore(process.env.GAME_STORE_PATH ?? '.data/games.json'),
-});
+const metrics = new Metrics();
+metrics.setProductInfo(PROTOCOL_VERSION);
+const rpc = withRpcMetrics(new WrpcClient({ network: configuredNetwork }), metrics);
+const store = new BackendGameStore(process.env.GAME_STORE_PATH ?? '.data/games.json', { metrics });
+const gameService = new BackendGameService({ rpc, store, metrics });
 
 // Optional, untrusted relay: clients publish non-secret game state here so the
 // opponent can discover it. Every payload is re-verified on-chain by the
 // receiving client, so the relay cannot alter the game. It is not required for
 // settlement and can be replaced by any other relay.
-const relay = new Map();
+const relay = new RelayStore();
+const mutatingLimiter = new RateLimiter({ limit: rateLimitPerMinute, windowMs: 60_000 });
+
+await store.init();
 
 const server = createServer((req, res) => {
-  void route(req, res).catch((error) => sendError(res, error));
+  const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+  const route = routeLabel(pathname);
+  const startedAtMs = performance.now();
+  let recorded = false;
+  const record = () => {
+    if (recorded) return;
+    recorded = true;
+    metrics.recordHttp({ method: req.method ?? 'GET', route, status: res.statusCode, durationSeconds: (performance.now() - startedAtMs) / 1000 });
+  };
+  res.on('finish', record);
+  res.on('close', record);
+  res.setHeader('x-content-type-options', 'nosniff');
+  res.setHeader('x-frame-options', 'DENY');
+  res.setHeader('referrer-policy', 'no-referrer');
+  void routeRequest(req, res, pathname).catch((error) => sendError(res, error));
 });
 
-async function route(req, res) {
-  const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
-  if (pathname === '/healthz' || pathname === '/readyz') {
+async function routeRequest(req, res, pathname) {
+  if (req.method === 'POST' && pathname.startsWith('/api/')) {
+    const decision = mutatingLimiter.check(clientAddress(req));
+    if (!decision.allowed) {
+      res.setHeader('retry-after', String(decision.retryAfterSeconds));
+      return sendJson(res, 429, { error: 'RATE_LIMITED', message: 'Too many requests; slow down and retry shortly' });
+    }
+  }
+
+  if (pathname === '/healthz') {
     return sendJson(res, 200, { ok: true, service: 'kaspa-even-odd', network: NETWORK, startedAt });
+  }
+  if (pathname === '/readyz') {
+    try {
+      await store.health();
+      return sendJson(res, 200, { ok: true, service: 'kaspa-even-odd', network: NETWORK, startedAt });
+    } catch {
+      return sendJson(res, 503, { ok: false, service: 'kaspa-even-odd', error: 'STORAGE_UNAVAILABLE' });
+    }
   }
 
   if (req.method === 'GET' && pathname === '/api/config') {
@@ -97,10 +139,12 @@ async function route(req, res) {
     const relayId = relayMatch[1].toLowerCase();
     if (req.method === 'POST') {
       relay.set(relayId, await readJson(req));
+      metrics.setRelayEntries(relay.size());
       return sendJson(res, 200, { ok: true });
     }
     if (req.method === 'GET') {
       const payload = relay.get(relayId);
+      metrics.setRelayEntries(relay.size());
       return payload ? sendJson(res, 200, payload) : sendJson(res, 404, { error: 'not_found' });
     }
   }
@@ -135,20 +179,35 @@ async function route(req, res) {
 function readJson(req) {
   return new Promise((resolve, reject) => {
     let body = '';
+    let size = 0;
+    let settled = false;
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      req.destroy();
+      reject(error);
+    };
+    req.setEncoding('utf8');
     req.on('data', (chunk) => {
+      if (settled) return;
+      size += Buffer.byteLength(chunk);
+      if (size > maxRequestBytes) return fail(new ProtocolError('REQUEST_TOO_LARGE', 'Request body is too large'));
       body += chunk;
-      if (body.length > 1_000_000) reject(new ProtocolError('REQUEST_TOO_LARGE', 'Request body is too large'));
     });
     req.on('end', () => {
+      if (settled) return;
+      settled = true;
       try { resolve(JSON.parse(body || '{}')); } catch { reject(new ProtocolError('INVALID_JSON', 'Request body must be valid JSON')); }
     });
-    req.on('error', reject);
+    req.on('error', fail);
+    req.on('aborted', () => fail(new ProtocolError('REQUEST_ABORTED', 'Request was aborted')));
   });
 }
 
 function sendError(res, error) {
+  if (res.writableEnded || res.destroyed) return;
   const code = error?.code ?? 'INTERNAL_ERROR';
-  const clientError = error instanceof ProtocolError || ['INVALID_JSON', 'REQUEST_TOO_LARGE'].includes(code);
+  const clientError = error instanceof ProtocolError || ['INVALID_JSON', 'REQUEST_TOO_LARGE', 'RELAY_PAYLOAD_TOO_LARGE', 'REQUEST_ABORTED'].includes(code);
   const notFound = ['GAME_NOT_FOUND', 'PREPARATION_NOT_FOUND', 'MATCH_NOT_FOUND'].includes(code);
   if (!clientError) console.error(error);
   sendJson(res, notFound ? 404 : clientError ? 400 : 502, {
@@ -158,6 +217,7 @@ function sendError(res, error) {
 }
 
 function sendJson(res, status, body) {
+  if (res.writableEnded || res.destroyed) return;
   res.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
 }
@@ -173,12 +233,62 @@ async function serveFile(root, requestPath, res) {
   }
 }
 
+function routeLabel(pathname) {
+  if (pathname === '/healthz') return '/healthz';
+  if (pathname === '/readyz') return '/readyz';
+  if (pathname === '/api/config') return '/api/config';
+  if (pathname === '/api/games/prepare') return '/api/games/prepare';
+  if (pathname === '/api/games/submit') return '/api/games/submit';
+  if (pathname === '/api/matchmaking/join') return '/api/matchmaking/join';
+  if (/^\/api\/matchmaking\/[0-9a-f-]{36}\/(commit|leave)$/i.test(pathname)) return '/api/matchmaking/:id/:action';
+  if (/^\/api\/matchmaking\/[0-9a-f-]{36}$/i.test(pathname)) return '/api/matchmaking/:id';
+  if (/^\/api\/games\/[0-9a-f]{64}\/(join|reveal)\/(prepare|submit)$/i.test(pathname)) return '/api/games/:id/:stage/:step';
+  if (/^\/api\/games\/[0-9a-f]{64}\/(creator_refund|fallback_claim|refund_player)\/(prepare|submit)$/i.test(pathname)) return '/api/games/:id/:action/:step';
+  if (/^\/api\/games\/[0-9a-f]{64}$/i.test(pathname)) return '/api/games/:id';
+  if (/^\/api\/relay\/[0-9a-f]{64}$/i.test(pathname)) return '/api/relay/:id';
+  if (pathname === '/' || pathname === '/host' || pathname === '/rival' || pathname === '/join' || pathname === '/game') return 'page';
+  if (/^\/(app|styles)\.\w+$/.test(pathname)) return 'asset';
+  if (/^\/[A-Za-z0-9_-]+\.(?:js|mjs)$/.test(pathname)) return 'asset';
+  if (pathname.startsWith('/src/')) return 'source';
+  if (pathname.startsWith('/vendor/')) return 'vendor';
+  if (pathname.startsWith('/covenant/')) return 'covenant';
+  return 'other';
+}
+
+function clientAddress(req) {
+  if (trustedProxy) {
+    const forwarded = req.headers['x-forwarded-for'];
+    if (typeof forwarded === 'string' && forwarded.length > 0) return forwarded.split(',')[0].trim();
+  }
+  return req.socket.remoteAddress ?? 'unknown';
+}
+
+function isPort(value) {
+  return Number.isInteger(value);
+}
+
+server.requestTimeout = 30_000;
+server.headersTimeout = 20_000;
+server.keepAliveTimeout = 5_000;
+
+const metricsServer = createServer((req, res) => {
+  const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+  if (pathname === '/metrics') {
+    res.writeHead(200, { 'content-type': 'text/plain; version=0.0.4; charset=utf-8', 'cache-control': 'no-store' });
+    return res.end(metrics.render());
+  }
+  return sendJson(res, 404, { error: 'not_found' });
+});
+metricsServer.requestTimeout = 10_000;
+metricsServer.headersTimeout = 5_000;
+
 server.listen(port, '0.0.0.0');
+metricsServer.listen(metricsPort, '0.0.0.0');
 
 function shutdown() {
-  server.close(async (error) => {
+  server.close(async () => {
     try { await rpc.disconnect(); } catch (disconnectError) { console.error(disconnectError); }
-    process.exit(error ? 1 : 0);
+    metricsServer.close(() => process.exit(0));
   });
   setTimeout(() => process.exit(1), 10_000).unref();
 }

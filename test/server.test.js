@@ -1,14 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 test('server serves the browser application and health probe', async (t) => {
   const port = 3100 + Math.floor(Math.random() * 500);
+  const metricsPort = port + 600;
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-server-'));
   const child = spawn(process.execPath, ['src/server.js'], {
-    env: { ...process.env, PORT: String(port) },
+    env: {
+      ...process.env,
+      PORT: String(port),
+      METRICS_PORT: String(metricsPort),
+      GAME_STORE_PATH: join(directory, 'games.json'),
+      RATE_LIMIT_PER_MINUTE: '6',
+    },
     stdio: 'ignore',
   });
   t.after(() => child.kill());
+  t.after(() => rm(directory, { recursive: true, force: true }));
 
   await waitForServer(`http://127.0.0.1:${port}/readyz`);
   const [page, host, rival, health, missing, demoApi, appScript, secretsScript, verifyScript, coreScript, genesisScript, artifact, pins, wasmJs] = await Promise.all([
@@ -138,6 +150,44 @@ test('server serves the browser application and health probe', async (t) => {
   assert.deepEqual(await relayGet.json(), relayPayload);
   const relayMissing = await fetch(`${origin}/api/relay/${'cd'.repeat(32)}`);
   assert.equal(relayMissing.status, 404);
+
+  const pageHeaders = await fetch(`${origin}/`);
+  assert.equal(pageHeaders.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(pageHeaders.headers.get('x-frame-options'), 'DENY');
+  assert.equal(pageHeaders.headers.get('referrer-policy'), 'no-referrer');
+
+  // Metrics live on a dedicated internal port and are never served publicly.
+  const publicMetrics = await fetch(`${origin}/metrics`);
+  assert.equal(publicMetrics.status, 404);
+  const metricsOrigin = `http://127.0.0.1:${metricsPort}`;
+  const metricsResponse = await fetch(`${metricsOrigin}/metrics`);
+  assert.equal(metricsResponse.status, 200);
+  assert.match(metricsResponse.headers.get('content-type') ?? '', /text\/plain/);
+  const metricsText = await metricsResponse.text();
+  assert.match(metricsText, /kaspa_http_requests_total\{/);
+  assert.match(metricsText, /kaspa_storage_operations_total\{operation="health"/);
+  assert.match(metricsText, /kaspa_process_resident_memory_bytes/);
+  assert.doesNotMatch(metricsText, /kaspatest:|[0-9a-f]{64}/);
+
+  // Oversized relay payloads are rejected and the connection is not drained.
+  const oversized = await fetch(`${origin}/api/relay/${'ef'.repeat(32)}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ blob: 'x'.repeat(300_000) }),
+  }).catch(() => ({ status: 400 }));
+  assert.equal(oversized.status, 400);
+
+  // Mutating API calls are rate limited per client.
+  const statuses = [];
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const response = await fetch(`${origin}/api/games/submit`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    statuses.push(response.status);
+  }
+  assert.ok(statuses.includes(429), `expected a 429 after the limit, saw ${statuses.join(',')}`);
 });
 
 async function waitForServer(url) {

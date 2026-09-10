@@ -10,13 +10,17 @@ import { parityOutcome, verifyRevealPreimage } from './reveal.js';
 import { blake2b256 } from './hashes/blake2b.mjs';
 import { FALLBACK_CLAIM_DAA_OFFSET, FIVE_MINUTE_DAA_OFFSET, NO_REVEAL_REFUND_DAA_OFFSET } from './terminal-actions.js';
 import { NETWORK, PROTOCOL_VERSION, ProtocolError, validateGameId } from './protocol.js';
+import { noopMetrics } from './metrics.js';
+import { EphemeralPreparations } from './ephemeral-preparations.js';
 
 const MATCH_STAKE_KAS = 1;
 
 export class BackendGameService {
-  constructor({ rpc, store }) {
+  constructor({ rpc, store, metrics = noopMetrics, ephemeral = new EphemeralPreparations() }) {
     this.rpc = rpc;
     this.store = store;
+    this.metrics = metrics;
+    this.ephemeral = ephemeral;
   }
 
   async networkStatus() {
@@ -28,6 +32,8 @@ export class BackendGameService {
     const address = this.#matchmakingAddress(input.address);
     const publicKey = normalizePublicKey(input.publicKey, 'matchmaking public key');
     const match = await this.store.joinMatchmaking({ matchId: randomUUID(), address, publicKey });
+    this.metrics.recordGameEvent('matchmaking_join');
+    await this.#recordMatchmakingBacklog();
     return this.#matchResponse(match, address);
   }
 
@@ -61,6 +67,8 @@ export class BackendGameService {
     const match = await this.store.loadMatch(matchId);
     this.#matchPlayer(match, playerAddress);
     await this.store.leaveMatch(matchId, playerAddress);
+    this.metrics.recordGameEvent('matchmaking_leave');
+    await this.#recordMatchmakingBacklog();
     return { matchId, status: 'left' };
   }
 
@@ -87,6 +95,7 @@ export class BackendGameService {
       ...(input.matchId ? { matchId: input.matchId } : {}),
     };
     await this.store.savePrepared(record);
+    this.metrics.recordGameEvent('creation_prepared');
     return { network: NETWORK, preparedHash: prepared.preparedHash, txJson: prepared.txJson, feeSompi: String(prepared.feeSompi), deadlineDaa: String(request.deadlineDaa) };
   }
 
@@ -111,6 +120,7 @@ export class BackendGameService {
       ...(matchId ? { matchId } : {}),
     });
     if (matchId) await this.#attachMatchGame(matchId, request.creatorAddress, transactionId);
+    this.metrics.recordGameEvent('creation_submitted');
     return { gameId: transactionId, network: NETWORK, status: 'broadcast', inviteUrl: `/join?v=${encodeURIComponent(PROTOCOL_VERSION)}&game=${transactionId}` };
   }
 
@@ -182,6 +192,7 @@ export class BackendGameService {
       ...(gameRecord.matchId ? { matchId: gameRecord.matchId } : {}),
     };
     await this.store.saveJoinPrepared(record);
+    this.metrics.recordGameEvent('join_prepared');
     return { gameId: id, preparedHash: record.preparedHash, txJson: record.txJson, stakeSompi: String(request.stakeSompi), feeSompi: record.feeSompi };
   }
 
@@ -214,6 +225,7 @@ export class BackendGameService {
         submittedAt: new Date().toISOString(),
       },
     });
+    this.metrics.recordGameEvent('join_submitted');
     return { gameId: id, transactionId, status: 'join_broadcast' };
   }
 
@@ -297,14 +309,15 @@ export class BackendGameService {
       payoutAddress: winner === 'creator' ? request.creatorAddress : winner ? gameRecord.join.joinerAddress : undefined,
       createdAt: new Date().toISOString(),
     };
-    await this.store.saveActionPrepared(record);
+    this.ephemeral.save(record);
+    this.metrics.recordGameEvent('reveal_prepared');
     return { gameId: id, preparedHash, txJson, feeSompi: String(feeSompi), stage: first ? 'settlement' : 'first_reveal' };
   }
 
   async submitReveal(gameId, { preparedHash, signedTxJson }) {
     const id = validateGameId(gameId);
-    const prepared = await this.store.loadActionPrepared(preparedHash);
-    if (!prepared || prepared.gameId !== id || prepared.action !== 'reveal') throw new ProtocolError('PREPARATION_NOT_FOUND', 'Reveal preparation was not found');
+    const prepared = this.ephemeral.load(preparedHash);
+    if (!prepared || prepared.gameId !== id || prepared.action !== 'reveal') throw new ProtocolError('PREPARATION_NOT_FOUND', 'Reveal preparation was not found or has expired');
     const gameRecord = await this.store.loadGame(id);
     if (!gameRecord?.join) throw new ProtocolError('GAME_NOT_JOINED', 'Player B has not joined this game');
     verifySignedTerminalTransaction({ prepared: { transaction: prepared.transaction }, signedTxJson });
@@ -324,6 +337,9 @@ export class BackendGameService {
       submittedAt: new Date().toISOString(),
     };
     await this.store.saveGame({ ...gameRecord, status: prepared.winner ? 'settlement_broadcast' : 'reveal_broadcast', reveals: [...(gameRecord.reveals ?? []), reveal] });
+    // Kept in memory (never on disk) until TTL so a retry after an ambiguous
+    // response stays idempotent; the preimage is already public once broadcast.
+    this.metrics.recordGameEvent('reveal_submitted');
     return { gameId: id, transactionId, status: prepared.winner ? 'settlement_broadcast' : 'reveal_broadcast' };
   }
 
@@ -419,6 +435,7 @@ export class BackendGameService {
       createdAt: new Date().toISOString(),
     };
     await this.store.saveActionPrepared(record);
+    this.metrics.recordGameEvent(`${action}_prepared`);
     return { gameId: id, preparedHash, txJson, feeSompi: String(feeSompi), action };
   }
 
@@ -438,6 +455,7 @@ export class BackendGameService {
       submittedAt: new Date().toISOString(),
     };
     await this.store.saveGame({ ...gameRecord, status: `${action}_broadcast`, safetyActions: [...(gameRecord.safetyActions ?? []), terminal] });
+    this.metrics.recordGameEvent(`${action}_submitted`);
     return { gameId: id, transactionId, status: `${action}_broadcast` };
   }
 
@@ -506,6 +524,14 @@ export class BackendGameService {
   #matchmakingAddress(value) {
     if (typeof value !== 'string' || !value.startsWith('kaspatest:')) throw new ProtocolError('INVALID_ADDRESS', 'Matchmaking requires a testnet wallet');
     return value;
+  }
+
+  async #recordMatchmakingBacklog() {
+    try {
+      this.metrics.setMatchmakingWaiting(await this.store.countWaitingMatches());
+    } catch {
+      // Backlog is best-effort telemetry; never let it affect a request.
+    }
   }
 
   #matchPlayer(match, address) {
