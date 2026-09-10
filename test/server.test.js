@@ -47,7 +47,10 @@ test('server serves the browser application and health probe', async (t) => {
   assert.equal(page.status, 200);
   assert.equal(host.status, 200);
   assert.equal(rival.status, 200);
-  assert.match(await page.text(), /Even\/Odd/);
+  const pageHtml = await page.text();
+  assert.match(pageHtml, /Even\/Odd/);
+  assert.match(pageHtml, /Connect Wallet/);
+  assert.match(pageHtml, /id="wallet-button"/);
   assert.deepEqual(await health.json().then(({ ok, service, network }) => ({ ok, service, network })), { ok: true, service: 'kaspa-even-odd', network: 'testnet-10' });
   assert.equal(missing.status, 404);
   assert.equal(demoApi.status, 404);
@@ -111,6 +114,8 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /data-recovery-wait/);
   assert.match(browserSource, /DEFAULT_WRPC_URL/);
   assert.match(browserSource, /recoveryControlState/);
+  assert.match(browserSource, /initWalletButton/);
+  assert.match(browserSource, /renderWalletButton/);
   assert.doesNotMatch(browserSource, /kastle/i);
 
   const wrpcSource = await (await fetch(`http://127.0.0.1:${port}/src/wrpc.mjs`)).text();

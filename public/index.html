@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f4f2ec">
+    <meta name="theme-color" content="#0b0f12">
     <meta name="description" content="Even/Odd — a fast game of chance on Kaspa testnet-10.">
     <title>Even/Odd</title>
     <link rel="stylesheet" href="/styles.css">
@@ -14,8 +14,12 @@
         <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
         <span>Even/Odd</span>
       </a>
-      <div class="network"><span class="pulse" aria-hidden="true"></span><span>Kaspa</span><span class="network-separator" aria-hidden="true">/</span><span>testnet-10</span></div>
+      <div class="topbar-actions">
+        <div class="network"><span class="pulse" aria-hidden="true"></span><span>Kaspa</span><span class="network-separator" aria-hidden="true">/</span><span>testnet-10</span></div>
+        <button type="button" class="wallet-button" id="wallet-button">Connect Wallet</button>
+      </div>
     </header>
+    <div id="wallet-notice" class="wallet-notice" role="status" aria-live="polite"></div>
     <main id="app"></main>
     <script type="module" src="/app.js"></script>
   </body>

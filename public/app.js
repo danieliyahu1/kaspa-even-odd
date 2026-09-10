@@ -19,6 +19,7 @@ async function boot() {
     // Never block first paint on the coordinating server: content renders
     // immediately and the config only refines the preferred wRPC endpoint.
     void loadServerConfig();
+    initWalletButton();
     if (location.pathname === '/join') return renderJoinEntry(params.get('game'));
     if (location.pathname === '/game') return renderGame(params.get('id') ?? params.get('game'));
     if (location.pathname === '/host') return renderCreate();
@@ -1006,7 +1007,7 @@ function bindPlayAgain() {
 }
 
 function detectRole(game) {
-  const address = window.__connectedAddress ?? localStorage.getItem('kaspa-connected-address');
+  const address = connectedAddress();
   if (address && game.creator?.address === address) return 'creator';
   if (address && game.joiner?.address === address) return 'joiner';
   return 'viewer';
@@ -1016,6 +1017,61 @@ function rememberAddress(address) {
   if (!address) return;
   window.__connectedAddress = address;
   try { localStorage.setItem('kaspa-connected-address', address); } catch { /* ignore */ }
+}
+
+function connectedAddress() {
+  if (window.__connectedAddress) return window.__connectedAddress;
+  try { return localStorage.getItem('kaspa-connected-address'); } catch { return null; }
+}
+
+function initWalletButton() {
+  const button = document.querySelector('#wallet-button');
+  if (!button) return;
+  button.addEventListener('click', onWalletClick);
+  renderWalletButton();
+}
+
+function renderWalletButton() {
+  const button = document.querySelector('#wallet-button');
+  if (!button) return;
+  const address = connectedAddress();
+  if (address) {
+    button.classList.add('connected');
+    button.setAttribute('aria-label', `Connected ${address}. Click to disconnect.`);
+    button.innerHTML = `<span class="wallet-dot" aria-hidden="true"></span>${escapeHtml(shortAddress(address))}`;
+  } else {
+    button.classList.remove('connected');
+    button.removeAttribute('aria-label');
+    button.textContent = 'Connect Wallet';
+  }
+}
+
+async function onWalletClick() {
+  if (connectedAddress()) {
+    window.__connectedAddress = undefined;
+    try { localStorage.removeItem('kaspa-connected-address'); } catch { /* ignore */ }
+    clearWalletNotice();
+    renderWalletButton();
+    return;
+  }
+  try {
+    const { account } = await connectKasware('#wallet-notice');
+    rememberAddress(account.address);
+    clearWalletNotice();
+    renderWalletButton();
+  } catch {
+    renderWalletButton();
+  }
+}
+
+function clearWalletNotice() {
+  const notice = document.querySelector('#wallet-notice');
+  if (notice) notice.innerHTML = '';
+}
+
+function shortAddress(address) {
+  const body = address.startsWith('kaspatest:') ? address.slice('kaspatest:'.length) : address;
+  return `${body.slice(0, 6)}\u2026${body.slice(-4)}`;
 }
 
 function capitalize(word) { return word ? word.charAt(0).toUpperCase() + word.slice(1) : ''; }
@@ -1099,6 +1155,8 @@ function watchKasware(provider) {
     logWarn('kasware_session_changed', { reason });
     window.__connectedAddress = undefined;
     try { localStorage.removeItem('kaspa-connected-address'); } catch { /* ignore */ }
+    clearWalletNotice();
+    renderWalletButton();
   };
   provider.on('accountsChanged', forget('accountsChanged'));
   provider.on('networkChanged', forget('networkChanged'));
