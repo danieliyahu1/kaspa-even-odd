@@ -15,11 +15,12 @@ const WASM = join(ROOT, 'vendor', 'kaspa-wasm32-sdk', 'v2.0.1', 'nodejs', 'kaspa
 const w = require(WASM);
 
 const NETWORK = 'testnet-10';
-const SEED = 'resource jungle outside scorpion cupboard day next room stereo issue shield news';
-const CREATOR_ADDR = 'kaspatest:qpchy8753068rt2szvwxc0yr0kl38sjxqs0cg7xe97y6tzxh5h5wx09rle5a7';
-const CHANGE_ADDR = 'kaspatest:qpg2gxu40zmtuwnsgny5mh7d7sq59dzfsnfsn0u5ds79az0tjh2g7f6gwpdn7';
-const PRIV = '77183c8d6127b3dbdfd3077c73b322bcb196cb8c504b4cf6206b740ffd60af82';
-const CREATOR_PUB = '0371721fd48bf471ad50131c6c3c837dbf13c246041f8478d92f89a588d7a5e8e3';
+// This is a local operator tool that signs a real testnet transaction. Wallet
+// material is never committed; supply a throwaway testnet wallet through the
+// environment. See README "Manual live smoke test".
+const CREATOR_ADDR = process.env.EO_CREATOR_ADDRESS ?? '';
+const CREATOR_PUB = process.env.EO_CREATOR_PUBLIC_KEY ?? '';
+const PRIV = process.env.EO_CREATOR_PRIVATE_KEY ?? '';
 
 // CLI: node scripts/manual-smoke.mjs --dry-run  (build+sign only) | (default) broadcast+confirm
 const DRY = process.argv.includes('--dry-run');
@@ -88,7 +89,17 @@ function toVersionedHex(spk) {
   return spk?.version !== undefined ? scriptToHex(spk) : spk?.script ?? '';
 }
 
+function requireWallet() {
+  const missing = [
+    ['EO_CREATOR_ADDRESS', CREATOR_ADDR],
+    ['EO_CREATOR_PUBLIC_KEY', CREATOR_PUB],
+    ['EO_CREATOR_PRIVATE_KEY', PRIV],
+  ].filter(([, value]) => !value).map(([name]) => name);
+  if (missing.length) throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+}
+
 async function main() {
+  requireWallet();
   const { adapter, url } = await connect();
   process.on('exit', () => { try { conn?.rpc?.disconnect?.(); } catch {} });
   let conn = { rpc: adapter.rpc, url };
