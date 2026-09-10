@@ -41,8 +41,25 @@ test('serializes and parses an invite with only version and game id', () => {
   const gameId = 'b'.repeat(64);
   const invite = serializeInvite({ gameId, origin: 'https://example.test/create' });
   assert.equal(invite, `https://example.test/join?v=EO%2Fv2&game=${gameId}`);
-  assert.deepEqual(parseInvite(invite, 'https://example.test'), { protocolVersion: 'EO/v2', network: 'testnet-10', gameId });
+  assert.deepEqual(parseInvite(invite, 'https://example.test'), { protocolVersion: 'EO/v2', network: 'testnet-10', gameId, creation: null });
   assert.throws(() => parseInvite(`${invite}&secret=do-not-accept`, 'https://example.test'), { code: 'INVALID_INVITE' });
+});
+
+test('serializes and parses an invite carrying the full creation state', () => {
+  const gameId = 'b'.repeat(64);
+  const creation = {
+    creatorPublicKey: '07'.repeat(32),
+    creatorCommitment: '09'.repeat(32),
+    side: 'even',
+    stakeKas: 5,
+    deadlineDaa: 500000000123n,
+    creatorAddress: 'kaspatest:creator',
+  };
+  const invite = serializeInvite({ gameId, origin: 'https://example.test/create', creation });
+  const parsed = parseInvite(invite, 'https://example.test');
+  assert.deepEqual(parsed.creation, creation);
+  assert.deepEqual(parsed.gameId, gameId);
+  assert.throws(() => parseInvite(`${invite}&zz=1`, 'https://example.test'), { code: 'INVALID_INVITE' });
 });
 
 test('confirms creation before producing an invite', async () => {

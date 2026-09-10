@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test \"test/*.test.js\"",
-    "check": "node --check src/index.js && node --check src/server.js && node --check public/app.js"
+    "check": "node --check src/index.js && node --check src/server.js && node --check src/wrpc.mjs && node --check src/wasm-loader.mjs && node --check src/client-actions.mjs && node --check src/funding.mjs && node --check src/covenant/even-odd-core.mjs && node --check src/covenant/template.mjs && node --check public/app.js && node --check public/secrets.js && node --check public/verify.js && node --check public/game-client.js"
   },
   "engines": {
     "node": ">=20"

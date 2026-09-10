@@ -1,8 +1,8 @@
-import { blake2b256 } from '/blake2b.mjs';
+import { bindSecretToGame, createRevealSecret, loadSecretForGame, transientCommitment } from '/secrets.js';
+import { verifyCreation } from '/verify.js';
+import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame } from '/game-client.js';
 
 const NETWORK = 'testnet-10';
-const FIXED_NONCE = new Uint8Array(32).fill(1);
-const FIXED_NONCE_HEX = bytesToHex(FIXED_NONCE);
 const app = document.querySelector('#app');
 const params = new URLSearchParams(location.search);
 const KASTLE_DOWNLOAD = 'https://kastle.app';
@@ -11,9 +11,11 @@ boot();
 
 async function boot() {
   try {
-    const config = await api('/api/config');
-    if (config.network !== NETWORK) throw new Error(`Backend must use ${NETWORK}`);
-    if (location.pathname === '/game' || location.pathname === '/join') return renderGame(params.get('id') ?? params.get('game'));
+    await api('/api/config')
+      .then((config) => { if (config.network !== NETWORK) throw new Error(`Backend must use ${NETWORK}`); })
+      .catch(() => { /* The app must run even if the coordinating server is gone. */ });
+    if (location.pathname === '/join') return renderJoinEntry(params.get('game'));
+    if (location.pathname === '/game') return renderGame(params.get('id') ?? params.get('game'));
     if (location.pathname === '/host') return renderCreate();
     if (location.pathname === '/rival') return renderMatchmaking();
     renderHome();
@@ -120,8 +122,7 @@ async function renderMatchmaking() {
     const button = document.querySelector('#match-vote');
     button.disabled = true;
     try {
-      const secret = createRevealSecret(vote);
-      match = await api(`/api/matchmaking/${match.matchId}/commit`, { method: 'POST', body: { address: account.address, commitment: secret.commitment } });
+      match = await api(`/api/matchmaking/${match.matchId}/commit`, { method: 'POST', body: { address: account.address, commitment: transientCommitment(vote) } });
       renderMatchState();
       await advanceMatch();
     } catch (error) {
@@ -163,7 +164,7 @@ async function renderMatchmaking() {
   async function startCreation() {
     try {
       content.innerHTML = '<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Preparing your 1 KAS game</span></div>';
-      const secret = createRevealSecret(vote);
+      const secret = await createRevealSecret(vote);
       const prepared = await api('/api/games/prepare', { method: 'POST', body: {
         creatorAddress: account.address,
         creatorPublicKey: account.publicKey,
@@ -172,10 +173,12 @@ async function renderMatchmaking() {
         stakeKas: 1,
         matchId: match.matchId,
       } });
+      await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side: match.side, stakeKas: 1, deadlineDaa: prepared.deadlineDaa });
       showNotice('#matchmaking-content', 'Confirm in Kastle', `Approve the ${match.stakeKas} KAS transaction.`, '');
       const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
       if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
       const game = await api('/api/games/submit', { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson, matchId: match.matchId } });
+      await bindSecretToGame(game.gameId, secret.secretId);
       location.href = `/game?id=${game.gameId}`;
     } catch (error) {
       showMatchStartError(error);
@@ -186,7 +189,8 @@ async function renderMatchmaking() {
     try {
       content.innerHTML = '<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Waiting for the 1 KAS game to be ready</span></div>';
       await waitForJoinableGame(match.gameId);
-      const secret = createRevealSecret(vote);
+      const secret = await createRevealSecret(vote);
+      await bindSecretToGame(match.gameId, secret.secretId);
       const prepared = await api(`/api/games/${match.gameId}/join/prepare`, { method: 'POST', body: {
         joinerAddress: account.address,
         joinerPublicKey: account.publicKey,
@@ -257,6 +261,7 @@ function renderCreate() {
           <p class="fate">Winner takes the pot &mdash; <span id="stake-fate">2 KAS</span>.</p>
         </div>
         <div id="create-notice"></div>
+        <p class="muted-note">Your number is saved only in this browser. Clearing site data before you reveal forfeits your stake.</p>
         <div class="actions">
           <button type="submit" class="primary" id="create-submit">Play for 1 KAS</button>
         </div>
@@ -315,20 +320,9 @@ function renderCreate() {
     try {
       const { provider, account } = await connectKastle('#create-notice');
       rememberAddress(account.address);
-      const secret = createRevealSecret(number);
-      showNotice('#create-notice', 'Reading the network', '', '');
-      const prepared = await api('/api/games/prepare', { method: 'POST', body: {
-        creatorAddress: account.address,
-        creatorPublicKey: account.publicKey,
-        creatorCommitment: secret.commitment,
-        side,
-        stakeKas: stake,
-      } });
-      showNotice('#create-notice', 'Confirm in Kastle', `Approve the ${stake} KAS testnet transaction.`, '');
-      const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
-      if (!signedTxJson) throw new Error('Kastle did not return a signed transaction');
-      const game = await api('/api/games/submit', { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
-      await waitForGameConfirmation(game.gameId, stake);
+      showNotice('#create-notice', 'Locking your stake', 'Confirm the transaction in Kastle.', '');
+      const result = await createGame({ wallet: kastleWallet(provider, account), side, number, stakeKas: stake, rpcUrl: preferredRpcUrl() });
+      location.href = `/game?id=${result.gameId}`;
     } catch (error) {
       submit.disabled = false;
       showNotice('#create-notice', 'Game was not created', error.message, 'error');
@@ -380,6 +374,7 @@ function joinSection(game, yourSide) {
         </fieldset>
         <p class="fate">Stake ${escapeHtml(theirStake)} KAS. Winner takes ${escapeHtml(theirStake * 2)} KAS.</p>
         <div id="join-notice"></div>
+        <p class="muted-note">Your number is saved only in this browser. Clearing site data before you reveal forfeits your stake.</p>
         <div class="actions">
           <button type="submit" class="primary" id="join-submit" disabled>Join for ${escapeHtml(theirStake)} KAS</button>
         </div>
@@ -411,7 +406,8 @@ async function bindJoin(gameId, game) {
     try {
       const { provider, account } = await connectKastle('#join-notice');
       rememberAddress(account.address);
-      const secret = createRevealSecret(number);
+      const secret = await createRevealSecret(number);
+      await bindSecretToGame(gameId, secret.secretId);
       const prepared = await api(`/api/games/${gameId}/join/prepare`, { method: 'POST', body: {
         joinerAddress: account.address,
         joinerPublicKey: account.publicKey,
@@ -431,12 +427,200 @@ async function bindJoin(gameId, game) {
 
 async function renderGame(gameId) {
   if (!isGameId(gameId)) return renderBackendError('That game link doesn\u2019t look right.');
+  const local = await loadHydratedGame(gameId).catch(() => null);
+  if (local) return renderClientGame(gameId, local);
   scheduleGameRefresh(gameId);
   try {
     paintGame(gameId, await api(`/api/games/${gameId}`));
   } catch (error) {
     renderBackendError(error.message);
   }
+}
+
+async function renderJoinEntry(gameId) {
+  if (!isGameId(gameId)) return renderBackendError('That game link doesn\u2019t look right.');
+  const creation = creationFromParams();
+  const local = await loadHydratedGame(gameId).catch(() => null);
+  if (local) return renderClientGame(gameId, local);
+  if (creation) return renderClientJoin(gameId, creation);
+  return renderGame(gameId);
+}
+
+function creationFromParams() {
+  const pk = params.get('pk');
+  const commitment = params.get('c');
+  const side = params.get('s');
+  const stake = params.get('k');
+  const deadline = params.get('d');
+  if (!pk || !commitment || !side || !stake || !deadline) return null;
+  return {
+    creatorPublicKey: pk,
+    creatorCommitment: commitment,
+    side: side === 'e' ? 'even' : 'odd',
+    stakeKas: Number(stake),
+    deadlineDaa: BigInt(deadline),
+    creatorAddress: params.get('a') || null,
+  };
+}
+
+function renderClientJoin(gameId, creation) {
+  const yourSide = creation.side === 'even' ? 'odd' : 'even';
+  app.innerHTML = `
+    <a class="back" href="/">Exit</a>
+    <section class="panel" aria-label="Join game">
+      <div class="panel-head"><h2>You're in.</h2></div>
+      <div class="game-body">
+        <div class="hero-card" id="join-card">
+          <p class="lead">You're <strong class="side-strong">${capitalize(yourSide)}</strong>.</p>
+          <form class="form" id="client-join-form">
+            <fieldset class="choice-group">
+              <legend>Your number</legend>
+              <div class="choice-row">
+                <button type="button" class="choice num" data-join-number="1" aria-pressed="false"><span class="num-big">1</span><small class="num-tag">Odd</small></button>
+                <button type="button" class="choice num" data-join-number="0" aria-pressed="false"><span class="num-big">2</span><small class="num-tag">Even</small></button>
+              </div>
+            </fieldset>
+            <p class="fate">Stake ${escapeHtml(creation.stakeKas)} KAS. Winner takes ${escapeHtml(creation.stakeKas * 2)} KAS.</p>
+            <div id="join-notice"></div>
+            <p class="muted-note">Your number is saved only in this browser. Clearing site data before you reveal forfeits your stake.</p>
+            <div class="actions"><button type="submit" class="primary" id="join-submit" disabled>Join for ${escapeHtml(creation.stakeKas)} KAS</button></div>
+          </form>
+        </div>
+      </div>
+    </section>`;
+  let number = null;
+  const submit = document.querySelector('#join-submit');
+  document.querySelectorAll('[data-join-number]').forEach((button) => {
+    button.addEventListener('click', () => {
+      number = Number(button.dataset.joinNumber);
+      document.querySelectorAll('[data-join-number]').forEach((item) => {
+        const selected = item === button;
+        item.classList.toggle('selected', selected);
+        item.setAttribute('aria-pressed', String(selected));
+      });
+      submit.disabled = false;
+    });
+  });
+  document.querySelector('#client-join-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    if (number === null) return showNotice('#join-notice', 'Pick a number', 'Choose 1 or 2 before you join.', 'error');
+    submit.disabled = true;
+    try {
+      const { provider, account } = await connectKastle('#join-notice');
+      rememberAddress(account.address);
+      showNotice('#join-notice', 'Matching the stake', 'Confirm the transaction in Kastle.', '');
+      await joinGame({ wallet: kastleWallet(provider, account), gameId, creation, number, rpcUrl: preferredRpcUrl() });
+      location.href = `/game?id=${gameId}`;
+    } catch (error) {
+      submit.disabled = false;
+      showNotice('#join-notice', error.message, '', 'error');
+    }
+  });
+}
+
+async function renderClientGame(gameId, record) {
+  const role = record.creator?.address === window.__connectedAddress ? 'creator'
+    : record.joiner?.address === window.__connectedAddress ? 'joiner' : 'viewer';
+  const revealed = Boolean(record.reveals?.[role]);
+  const settled = ['settled', 'fallback_claimed_broadcast', 'refunded', 'creator_refund_broadcast'].includes(record.status);
+  const yourSide = role === 'joiner' ? (record.creator?.side === 'even' ? 'odd' : 'even') : record.creator?.side;
+  const invite = role === 'creator' && !record.joiner ? clientInviteUrl(gameId, record) : null;
+  app.innerHTML = `
+    <a class="back" href="/">Exit</a>
+    <section class="panel" aria-label="Game">
+      <div class="panel-head"><h2>${settled ? 'Game over' : record.joiner ? "It's on." : 'Your game is ready.'}</h2></div>
+      <div class="game-body">
+        <div class="summary">
+          <div class="sum-item"><small>Stake</small><strong>${escapeHtml(record.stakeKas)} KAS</strong></div>
+          <div class="sum-item"><small>Pot</small><strong>${escapeHtml(record.stakeKas * 2)} KAS</strong></div>
+        </div>
+        ${yourSide ? `<p class="muted-note">You're ${escapeHtml(capitalize(yourSide))}.</p>` : ''}
+        ${invite ? `<div class="invite-box"><p class="muted-note">Share this link with your friend:</p><button class="share-button" data-action="copy-invite">Copy link</button></div>` : ''}
+        ${record.joiner && !settled && !revealed ? '<div class="actions"><button type="button" class="primary" data-action="client-reveal">Reveal number</button></div>' : ''}
+        ${record.joiner && !settled ? '<div class="actions"><button type="button" class="outline" data-action="client-recover">Claim or refund</button></div>' : ''}
+        ${!record.joiner ? '<div class="actions"><button type="button" class="outline" data-action="client-recover">Cancel and refund</button></div>' : ''}
+        <div id="client-notice"></div>
+        <p class="muted-note">This game is enforced by the Kaspa covenant. The site cannot move your funds or change the result.</p>
+      </div>
+    </section>`;
+  document.querySelector('[data-action="copy-invite"]')?.addEventListener('click', async (event) => {
+    try { await navigator.clipboard.writeText(invite); flashCopy(event.target); } catch { /* ignore */ }
+  });
+  document.querySelector('[data-action="client-reveal"]')?.addEventListener('click', async (event) => {
+    event.target.disabled = true;
+    try {
+      const { provider, account } = await connectKastle('#client-notice');
+      rememberAddress(account.address);
+      showNotice('#client-notice', 'Revealing', 'Confirm the transaction in Kastle.', '');
+      await clientReveal({ wallet: kastleWallet(provider, account), gameId, rpcUrl: preferredRpcUrl() });
+      location.reload();
+    } catch (error) {
+      event.target.disabled = false;
+      showNotice('#client-notice', error.message, '', 'error');
+    }
+  });
+  document.querySelector('[data-action="client-recover"]')?.addEventListener('click', async (event) => {
+    event.target.disabled = true;
+    try {
+      const { provider, account } = await connectKastle('#client-notice');
+      rememberAddress(account.address);
+      showNotice('#client-notice', 'Recovering', 'Confirm the transaction in Kastle.', '');
+      const result = await refundOrClaim({ wallet: kastleWallet(provider, account), gameId, rpcUrl: preferredRpcUrl() });
+      showNotice('#client-notice', 'Submitted', `${result.action} broadcast.`, '');
+      location.reload();
+    } catch (error) {
+      event.target.disabled = false;
+      showNotice('#client-notice', error.message, '', 'error');
+    }
+  });
+  scheduleClientRefresh(gameId, record);
+}
+
+function scheduleClientRefresh(gameId, record) {
+  window.__clientSignature = clientSignature(record);
+  clearInterval(window.__clientRefresh);
+  window.__clientRefresh = setInterval(async () => {
+    if (!(location.pathname === '/game' || location.pathname === '/join') || (params.get('id') ?? params.get('game')) !== gameId) {
+      clearInterval(window.__clientRefresh);
+      return;
+    }
+    const fresh = await loadHydratedGame(gameId).catch(() => null);
+    if (fresh && clientSignature(fresh) !== window.__clientSignature) renderClientGame(gameId, fresh);
+  }, 4_000);
+}
+
+function clientSignature(record) {
+  return [record.joiner?.address ?? '', record.status ?? '', record.firstRevealer ?? '', Object.keys(record.reveals ?? {}).join(',')].join('|');
+}
+
+function clientInviteUrl(gameId, record) {
+  const url = new URL('/join', location.origin);
+  url.searchParams.set('v', 'EO/v2');
+  url.searchParams.set('game', gameId);
+  url.searchParams.set('pk', record.creator.publicKey);
+  url.searchParams.set('c', record.creator.commitment);
+  url.searchParams.set('s', record.creator.side === 'even' ? 'e' : 'o');
+  url.searchParams.set('k', String(record.stakeKas));
+  url.searchParams.set('d', String(record.deadlineDaa));
+  if (record.creator.address) url.searchParams.set('a', record.creator.address);
+  return url.toString();
+}
+
+function kastleWallet(provider, account) {
+  return {
+    address: account.address,
+    publicKey: account.publicKey,
+    signTx: (txJson) => provider.signTx(NETWORK, txJson),
+  };
+}
+
+function preferredRpcUrl() {
+  const fromParam = params.get('node');
+  if (fromParam) {
+    try { localStorage.setItem('kaspa-rpc-url', fromParam); } catch { /* ignore */ }
+    return fromParam;
+  }
+  try { return localStorage.getItem('kaspa-rpc-url') || undefined; } catch { return undefined; }
 }
 
 function paintGameHeader(status, role, game) {
@@ -509,11 +693,7 @@ function revealSection(game, role) {
     <div id="game-action" class="reveal-block">
       <p class="lead">Reveal your number</p>
       <div id="reveal-notice"></div>
-      <div class="choice-row">
-        <button type="button" class="choice num" data-reveal-number="1" aria-pressed="false"><span class="num-big">1</span><small class="num-tag">Odd</small></button>
-        <button type="button" class="choice num" data-reveal-number="0" aria-pressed="false"><span class="num-big">2</span><small class="num-tag">Even</small></button>
-      </div>
-      <div class="actions"><button type="button" class="primary" data-action="reveal" disabled>Reveal number</button></div>
+      <div class="actions"><button type="button" class="primary" data-action="reveal">Reveal number</button></div>
     </div>`;
 }
 
@@ -525,29 +705,22 @@ function isMyReveal(game, role) {
 function bindReveal(gameId) {
   const reveal = document.querySelector('[data-action="reveal"]');
   if (!reveal) return;
-  let revealChoice = null;
-  document.querySelectorAll('[data-reveal-number]').forEach((button) => {
-    button.addEventListener('click', () => {
-      revealChoice = Number(button.dataset.revealNumber);
-      document.querySelectorAll('[data-reveal-number]').forEach((item) => {
-        const selected = item === button;
-        item.classList.toggle('selected', selected);
-        item.setAttribute('aria-pressed', String(selected));
-      });
-      reveal.disabled = false;
-    });
-  });
   reveal.addEventListener('click', async () => {
     reveal.disabled = true;
     try {
       const { provider, account } = await connectKastle('#reveal-notice');
       rememberAddress(account.address);
-      if (revealChoice === null) { throw new Error('Pick your number first'); }
+      const secret = await loadSecretForGame(gameId);
+      if (!secret) {
+        showNotice('#reveal-notice', 'Reveal unavailable', 'This browser does not have your unrevealed number for this game. Play the game in the browser you used to start it, and keep this site\'s data.', 'error');
+        reveal.disabled = false;
+        return;
+      }
       const prepared = await api(`/api/games/${gameId}/reveal/prepare`, { method: 'POST', body: {
         playerAddress: account.address,
         playerPublicKey: account.publicKey,
-        choice: revealChoice,
-        nonceHex: FIXED_NONCE_HEX,
+        choice: secret.choice,
+        nonceHex: secret.nonceHex,
       } });
       showNotice('#reveal-notice', 'Confirm in Kastle', `Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
       const signedTxJson = await provider.signTx(NETWORK, prepared.txJson);
@@ -557,12 +730,7 @@ function bindReveal(gameId) {
     } catch (error) {
       reveal.disabled = false;
       if (error.code === 'INVALID_REVEAL') {
-        revealChoice = null;
-        document.querySelectorAll('[data-reveal-number]').forEach((item) => {
-          item.classList.remove('selected');
-          item.setAttribute('aria-pressed', 'false');
-        });
-        showNotice('#reveal-notice', 'That was the wrong number', 'Pick the number you locked in at the start, then try again.', 'error');
+        showNotice('#reveal-notice', 'Reveal did not match', 'The saved number no longer matches the locked commitment. You may have started this game in another browser.', 'error');
       } else {
         showNotice('#reveal-notice', error.message, '', 'error');
       }
@@ -608,12 +776,21 @@ function safetySection(game) {
         <div class="actions"><button type="button" class="outline" data-action="safety">Cancel game</button></div>
       </div>`;
   }
+  if (game.safetyAction === 'refund_player' && (game.status === 'joined' || game.status === 'refund_partial')) {
+    return `
+      <div id="game-safety" class="safety">
+        <p class="lead">No one revealed</p>
+        <p class="muted-note">You can take back your stake after the wait.</p>
+        <div class="actions"><button type="button" class="outline" data-action="safety">Refund my stake</button></div>
+      </div>`;
+  }
   return '';
 }
 
 function terminalSection(game) {
   if (game.status === 'fallback_claimed') return `<div class="notice"><strong>Pot claimed.</strong>Your ${game.matchmaking ? 'rival' : 'friend'} never revealed, so you took the pot.</div>`;
   if (game.status === 'refunded' || game.status === 'creator_refunded') return '<div class="notice"><strong>Canceled.</strong>Your stake was returned.</div>';
+  if (game.status === 'refund_partial') return '<div class="notice"><strong>Partial refund.</strong>One stake was returned. The other player can still refund theirs.</div>';
   return '';
 }
 
@@ -735,13 +912,6 @@ async function connectKastle(selector) {
   return { provider, account };
 }
 
-function createRevealSecret(choice) {
-  const preimage = new Uint8Array(40);
-  preimage[0] = choice;
-  preimage.set(FIXED_NONCE, 8);
-  return { choice, nonceHex: FIXED_NONCE_HEX, commitment: bytesToHex(blake2b256(preimage)) };
-}
-
 function renderBackendError(message) {
   app.innerHTML = `<a class="back" href="/">Exit</a><section class="panel"><p class="lead">Something went wrong.</p><div class="notice error"><strong>${escapeHtml(message)}</strong></div></section>`;
 }
@@ -765,6 +935,5 @@ function showNotice(selector, title, message, kind) {
 }
 
 function isGameId(value) { return /^[0-9a-f]{64}$/i.test(value ?? ''); }
-function bytesToHex(value) { return [...value].map((byte) => byte.toString(16).padStart(2, '0')).join(''); }
 function formatKas(sompi) { return (Number(sompi) / 100_000_000).toFixed(8).replace(/0+$/, '').replace(/\.$/, ''); }
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[character]); }

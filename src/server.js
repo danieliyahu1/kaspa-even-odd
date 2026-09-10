@@ -12,7 +12,9 @@ const configuredNetwork = process.env.KASPA_NETWORK ?? NETWORK;
 const startedAt = new Date().toISOString();
 const publicRoot = fileURLToPath(new URL('../public/', import.meta.url));
 const sourceRoot = fileURLToPath(new URL('./', import.meta.url));
-const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8' };
+const covenantRoot = fileURLToPath(new URL('../covenant/', import.meta.url));
+const vendorRoot = fileURLToPath(new URL('../vendor/', import.meta.url));
+const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm' };
 
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer between 1 and 65535');
 if (configuredNetwork !== NETWORK) throw new Error(`KASPA_NETWORK must be ${NETWORK}`);
@@ -22,6 +24,12 @@ const gameService = new BackendGameService({
   rpc,
   store: new BackendGameStore(process.env.GAME_STORE_PATH ?? '.data/games.json'),
 });
+
+// Optional, untrusted relay: clients publish non-secret game state here so the
+// opponent can discover it. Every payload is re-verified on-chain by the
+// receiving client, so the relay cannot alter the game. It is not required for
+// settlement and can be replaced by any other relay.
+const relay = new Map();
 
 const server = createServer((req, res) => {
   void route(req, res).catch((error) => sendError(res, error));
@@ -84,14 +92,42 @@ async function route(req, res) {
     return sendJson(res, 200, await gameService.readGame(gameMatch[1]));
   }
 
+  const relayMatch = pathname.match(/^\/api\/relay\/([0-9a-f]{64})$/i);
+  if (relayMatch) {
+    const relayId = relayMatch[1].toLowerCase();
+    if (req.method === 'POST') {
+      relay.set(relayId, await readJson(req));
+      return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'GET') {
+      const payload = relay.get(relayId);
+      return payload ? sendJson(res, 200, payload) : sendJson(res, 404, { error: 'not_found' });
+    }
+  }
+
   if (req.method === 'GET' && (pathname === '/' || pathname === '/host' || pathname === '/rival' || pathname === '/join' || pathname === '/game')) {
     return serveFile(publicRoot, 'index.html', res);
   }
   if (req.method === 'GET' && /^\/(app|styles)\.\w+$/.test(pathname)) {
     return serveFile(publicRoot, pathname.slice(1), res);
   }
-  if (req.method === 'GET' && pathname === '/blake2b.mjs') {
-    return serveFile(sourceRoot, 'hashes/blake2b.mjs', res);
+  const publicModule = pathname.match(/^\/([A-Za-z0-9_-]+\.(?:js|mjs))$/);
+  if (req.method === 'GET' && publicModule) {
+    return serveFile(publicRoot, publicModule[1], res);
+  }
+  const sourceModule = pathname.match(/^\/src\/(.+\.(?:js|mjs))$/i);
+  if (req.method === 'GET' && sourceModule) {
+    return serveFile(sourceRoot, sourceModule[1], res);
+  }
+  const vendorFile = pathname.match(/^\/vendor\/(.+\.(?:js|mjs|wasm|json))$/i);
+  if (req.method === 'GET' && vendorFile) {
+    return serveFile(vendorRoot, vendorFile[1], res);
+  }
+  if (req.method === 'GET' && pathname === '/covenant/even_odd.template.artifact.json') {
+    return serveFile(covenantRoot, 'even_odd.template.artifact.json', res);
+  }
+  if (req.method === 'GET' && pathname === '/covenant/pins.json') {
+    return serveFile(covenantRoot, 'pins.json', res);
   }
   return sendJson(res, 404, { error: 'not_found' });
 }
