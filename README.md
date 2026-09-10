@@ -1,5 +1,7 @@
 # Kaspa Even/Odd
 
+Live: <https://kaspa-even-odd.danieliyahu.com/>
+
 Initial protocol implementation for the non-custodial Even/Odd MVP on
 Kaspa `testnet-10`.
 
