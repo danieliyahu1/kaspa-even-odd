@@ -1,5 +1,6 @@
 import { ProtocolError } from './protocol.js';
-import { EVEN_ODD_TEMPLATE } from './covenant/even-odd.mjs';
+import { getCovenantTemplate } from './covenant/template.mjs';
+import { hexToBytes, bytesToHex } from './hashes/hex.mjs';
 import {
   FALLBACK_CLAIM_DAA_OFFSET,
   NO_REVEAL_REFUND_DAA_OFFSET,
@@ -16,13 +17,13 @@ export const TERMINAL_ENTRIES = Object.freeze({
 });
 
 export function buildKccEntrySignatureScript({ entry, args, redeemScript, wasm = loadWasmSdk() }) {
-  const dispatchTag = EVEN_ODD_TEMPLATE.dispatchTags?.[entry];
+  const dispatchTag = getCovenantTemplate().dispatchTags?.[entry];
   if (!dispatchTag) throw new ProtocolError('INVALID_TRANSACTION', `Unknown Even/Odd entry ${entry}`);
   if (!Array.isArray(args)) throw new ProtocolError('INVALID_TRANSACTION', 'KCC entry arguments are required');
 
   const builder = new wasm.ScriptBuilder();
   for (const arg of args) addArgument(builder, arg);
-  builder.addData(Buffer.from(dispatchTag, 'hex'));
+  builder.addData(hexToBytes(dispatchTag));
   const invocation = builder.drain();
   return redeemScript === undefined ? invocation : invocation + pushScriptData(redeemScript);
 }
@@ -242,7 +243,7 @@ function addArgument(builder, argument) {
     return;
   }
   const value = argument?.value ?? argument;
-  const bytes = value instanceof Uint8Array || Buffer.isBuffer(value) ? value : hexBytes(value);
+  const bytes = value instanceof Uint8Array || ArrayBuffer.isView(value) ? value : hexBytes(value);
   if (bytes.length === 0) throw new ProtocolError('INVALID_TRANSACTION', 'KCC byte argument cannot be empty');
   builder.addData(bytes);
 }
@@ -285,17 +286,16 @@ function hexBytes(value) {
   if (typeof value !== 'string' || value.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(value)) {
     throw new ProtocolError('INVALID_TRANSACTION', 'Byte argument must be hexadecimal');
   }
-  return Uint8Array.from(Buffer.from(value, 'hex'));
+  return hexToBytes(value);
 }
 
 function pushScriptData(value) {
   const data = hexBytes(value);
   const length = data.length;
-  if (length <= 75) return length.toString(16).padStart(2, '0') + Buffer.from(data).toString('hex');
+  if (length <= 75) return length.toString(16).padStart(2, '0') + bytesToHex(data);
   if (length <= 0xffff) {
-    const size = Buffer.alloc(2);
-    size.writeUInt16LE(length);
-    return `4d${size.toString('hex')}${Buffer.from(data).toString('hex')}`;
+    const size = Uint8Array.of(length & 0xff, (length >> 8) & 0xff);
+    return `4d${bytesToHex(size)}${bytesToHex(data)}`;
   }
   throw new ProtocolError('INVALID_TRANSACTION', 'Redeem script is too large');
 }

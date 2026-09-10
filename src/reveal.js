@@ -1,4 +1,5 @@
 import { blake2b256 } from './hashes/blake2b.mjs';
+import { hexToBytes, bytesToHex } from './hashes/hex.mjs';
 import { ProtocolError } from './protocol.js';
 import { deadlineAfterDaa, FALLBACK_CLAIM_DAA_OFFSET, TERMINAL_COPY } from './terminal-actions.js';
 
@@ -62,7 +63,7 @@ export function createRevealSecret({ gameId, player, choice, nonce, nonceHex }) 
     gameId: normalizeGameId(gameId),
     player: normalizePlayer(player),
     choice: secret.choice,
-    nonceHex: Buffer.from(secret.nonce).toString('hex'),
+    nonceHex: bytesToHex(secret.nonce),
     commitment: revealCommitment(secret),
     createdAt: new Date().toISOString(),
   });
@@ -88,7 +89,7 @@ export function canonicalRevealPreimage({ choice, nonce }) {
 }
 
 export function revealCommitment({ choice, nonce, nonceHex }) {
-  return Buffer.from(blake2b256(canonicalRevealPreimage({ choice, nonce: nonce ?? nonceHex }))).toString('hex');
+  return bytesToHex(blake2b256(canonicalRevealPreimage({ choice, nonce: nonce ?? nonceHex })));
 }
 
 export function verifyRevealPreimage({ commitment, choice, nonce, nonceHex }) {
@@ -176,7 +177,7 @@ function normalizeRevealRecord(record) {
     gameId: normalizeGameId(record.gameId),
     player: normalizePlayer(record.player),
     choice: secret.choice,
-    nonceHex: Buffer.from(secret.nonce).toString('hex'),
+    nonceHex: bytesToHex(secret.nonce),
     commitment: record.commitment ? normalizeHex32(record.commitment, 'commitment') : revealCommitment(secret),
     createdAt: record.createdAt,
   });
@@ -208,16 +209,16 @@ function normalizeChoice(choice) {
 }
 
 function normalizeBytes32(value, name) {
-  if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+  if (value instanceof Uint8Array || ArrayBuffer.isView(value)) {
     if (value.length === 32) return Uint8Array.from(value);
   }
-  if (typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value)) return Uint8Array.from(Buffer.from(value, 'hex'));
+  if (typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value)) return hexToBytes(value);
   throw new ProtocolError('INVALID_REVEAL', `${name} must be 32 bytes`);
 }
 
 function normalizeHex32(value, name) {
   if (typeof value === 'string' && /^[0-9a-f]{64}$/i.test(value)) return value.toLowerCase();
-  if (value instanceof Uint8Array || Buffer.isBuffer(value)) return Buffer.from(normalizeBytes32(value, name)).toString('hex');
+  if (value instanceof Uint8Array || ArrayBuffer.isView(value)) return bytesToHex(normalizeBytes32(value, name));
   throw new ProtocolError('INVALID_GAME_STATE', `${name} must be a 32-byte hexadecimal value`);
 }
 

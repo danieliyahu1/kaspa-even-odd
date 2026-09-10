@@ -1,6 +1,7 @@
 import { ProtocolError } from './protocol.js';
 import { buildKccEntrySignatureScript } from './terminal-transactions.js';
 import { loadWasmSdk, verifyWasmSignedSafeJson } from './wasm-transaction.js';
+import { hexToBytes } from './hashes/hex.mjs';
 
 export function prepareJoinTransaction({ game, joinerPublicKey, joinerCommitment, gameInput, feeInputs = [], feeSompi = 0n, change, continuationScriptPublicKey, continuationCovenant }) {
   if (!gameInput || typeof gameInput !== 'object') throw invalid('Current game covenant input is required');
@@ -76,7 +77,7 @@ function normalizeInput(entry, signatureScript) {
 
 function bytes(value, length, name) {
   if (typeof value !== 'string' || value.length !== length * 2 || !/^[0-9a-f]+$/i.test(value)) throw new ProtocolError('INVALID_GAME_STATE', `${name} must be ${length} bytes of hexadecimal`);
-  return Uint8Array.from(Buffer.from(value, 'hex'));
+  return hexToBytes(value);
 }
 
 function positive(value, name) {

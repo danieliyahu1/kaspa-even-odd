@@ -1,13 +1,10 @@
-import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import { dirname, join } from 'node:path';
 import { blake2b256 } from './hashes/blake2b.mjs';
+import { bytesToHex } from './hashes/hex.mjs';
 import { ProtocolError } from './protocol.js';
 import { DEFAULT_RELAY_FLOOR_RATE } from './fee-policy.js';
+import { loadWasmSdk } from './wasm-loader.mjs';
 
-const require = createRequire(import.meta.url);
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const WASM_ENTRY = join(__dirname, '..', 'vendor', 'kaspa-wasm32-sdk', 'v2.0.1', 'nodejs', 'kaspa', 'kaspa.js');
+export { loadWasmSdk };
 
 // Transaction-v1 funding inputs must commit a compute budget large enough to
 // cover the schnorr signature (~100,000 script units). Each budget unit grants
@@ -16,19 +13,6 @@ export const COMPUTE_BUDGET = 50;
 // Standard Kaspa output script_public_key is versioned: u16 version (0x0000)
 // followed by the versionless aa20<blake2b256(redeemScript)>87 P2SH script.
 const SCRIPT_VERSION_HEX = '0000';
-
-let cachedWasm = null;
-
-export function loadWasmSdk(options = {}) {
-  if (cachedWasm) return cachedWasm;
-  const entry = options.entry ?? WASM_ENTRY;
-  try {
-    cachedWasm = require(entry);
-  } catch (error) {
-    throw new ProtocolError('WASM_UNAVAILABLE', `Rusty Kaspa v2.0.1 WASM SDK is not available: ${error?.message ?? error}`);
-  }
-  return cachedWasm;
-}
 
 export function createWasmGenesisSafeJson({ request, authorizingInput, inputs, change, feerate, relayFloorRate }) {
   const wasm = loadWasmSdk();
@@ -115,7 +99,7 @@ export function createWasmGenesisSafeJson({ request, authorizingInput, inputs, c
 
   const policy = { authorizingInput: authorizingIndex };
   if (withChange) policy.changeScriptPublicKey = changePreference;
-  const preparedHash = Buffer.from(blake2b256(new TextEncoder().encode(txJson))).toString('hex');
+  const preparedHash = bytesToHex(blake2b256(new TextEncoder().encode(txJson)));
   return Object.freeze({
     txJson,
     preparedHash,

@@ -1,4 +1,5 @@
 import { blake2b256 } from './hashes/blake2b.mjs';
+import { hexToBytes, bytesToHex } from './hashes/hex.mjs';
 import { ProtocolError } from './protocol.js';
 
 const COVENANT_ID_DOMAIN = new TextEncoder().encode('CovenantID');
@@ -33,7 +34,7 @@ export function computeGenesisCovenantId(authorizingOutpoint, outputs) {
       script.script,
     );
   }
-  return Buffer.from(blake2b256(concat(chunks), COVENANT_ID_DOMAIN)).toString('hex');
+  return bytesToHex(blake2b256(concat(chunks), COVENANT_ID_DOMAIN));
 }
 
 export function createGenesisGameOutput({ request, authorizingInput, authorizingOutpoint }) {
@@ -206,7 +207,7 @@ function decimalBigInt(value, name) {
 
 function hexBytes(value, length, name) {
   if (typeof value !== 'string' || !/^(?:[0-9a-f]{2})+$/i.test(value)) throw invalid(`${name} must be hexadecimal`);
-  const bytes = Uint8Array.from(Buffer.from(value, 'hex'));
+  const bytes = hexToBytes(value);
   if (length !== undefined && bytes.length !== length) throw invalid(`${name} must be ${length} bytes`);
   return bytes;
 }
