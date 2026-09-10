@@ -63,3 +63,37 @@ test('matchmaking creation accepts the durable game commitment after the transie
     (error) => error.code === 'NO_UTXOS',
   );
 });
+
+test('matchmaking creation starts as soon as the creator locks a vote', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rpc = {
+    getBlockDagInfo: async () => ({ virtualDaaScore: '100' }),
+    getUtxosByAddresses: async () => ({ entries: [] }),
+    getFeeEstimate: async () => ({ estimate: { priorityBucket: [{ feerate: 1 }] } }),
+  };
+  const service = new BackendGameService({ rpc, store: new BackendGameStore(join(directory, 'games.json')) });
+  const first = await service.joinMatchmaking({ address: 'kaspatest:first', publicKey: 'a'.repeat(64) });
+  await service.joinMatchmaking({ address: 'kaspatest:second', publicKey: 'b'.repeat(64) });
+
+  const firstView = await service.matchmakingStatus(first.matchId, 'kaspatest:first');
+  const creatorAddress = firstView.role === 'creator' ? 'kaspatest:first' : 'kaspatest:second';
+  const creatorPublicKey = creatorAddress === 'kaspatest:first' ? 'a'.repeat(64) : 'b'.repeat(64);
+  const creatorView = await service.matchmakingStatus(first.matchId, creatorAddress);
+
+  // Only the creator votes; the joiner has not picked a number yet.
+  await service.submitMatchVote(first.matchId, { address: creatorAddress, commitment: 'c'.repeat(64) });
+
+  // The creator must be able to lock the game now, not once the joiner votes.
+  await assert.rejects(
+    service.prepareCreation({
+      matchId: first.matchId,
+      creatorAddress,
+      creatorPublicKey,
+      creatorCommitment: 'e'.repeat(64),
+      side: creatorView.side,
+      stakeKas: 1,
+    }),
+    (error) => error.code === 'NO_UTXOS',
+  );
+});

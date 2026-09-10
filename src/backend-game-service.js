@@ -581,7 +581,9 @@ export class BackendGameService {
     // The matchmaking vote commitment is only a "player has voted" signal and is
     // intentionally non-durable; the on-chain game commitment is created
     // separately. Requiring them to be equal would reject every valid start.
-    if (match.status !== 'ready' || playerIndex !== match.creatorIndex || input.stakeKas !== MATCH_STAKE_KAS || input.side !== assignedSide || !player.commitment) {
+    // The creator may lock the on-chain game as soon as they have picked, before
+    // the joiner votes; requiring 'ready' would make the creator wait.
+    if (!['matched', 'ready'].includes(match.status) || playerIndex !== match.creatorIndex || input.stakeKas !== MATCH_STAKE_KAS || input.side !== assignedSide || !player.commitment) {
       throw new ProtocolError('MATCH_NOT_READY', 'This matchmaking game is not ready to start');
     }
   }

@@ -118,7 +118,7 @@ async function renderMatchmaking() {
       document.querySelector('#match-vote').addEventListener('click', commitVote);
       return;
     }
-    const message = match.ready ? 'Starting your game' : 'Waiting for your rival to pick a number';
+    const message = match.ready ? 'Starting your game' : 'Waiting for your rival to lock in the game';
     content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">${message}</span></div>`;
   }
 
@@ -155,7 +155,9 @@ async function renderMatchmaking() {
   }
 
   async function advanceMatch() {
-    if (started || !match.ready || !match.voteLocked) return;
+    // The creator funds as soon as they have picked; the joiner waits for that
+    // covenant output to exist on-chain, since the join tx must spend it.
+    if (started || !match.voteLocked) return;
     if (match.role === 'creator' && !match.gameId) {
       started = true;
       clearInterval(pollTimer);
