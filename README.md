@@ -147,6 +147,38 @@ Runtime details:
 - Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
   `/var/lib/kaspa-even-odd` stores non-secret backend game metadata.
 
+## Trustless client
+
+The friend/invite flow runs entirely in the browser and does not depend on the
+backend to move funds:
+
+- `src/wasm-loader.mjs` loads the pinned Rusty Kaspa v2.0.1 SDK in Node (NodeJS
+  build) or the browser (web build), verifying the WASM binary against the
+  pinned SHA-256 before use.
+- `src/covenant/even-odd-core.mjs` is the isomorphic, `Buffer`-free covenant
+  derivation; `src/covenant/template.mjs` supplies the pinned artifact.
+- `src/client-actions.mjs` builds create/join/reveal/refund/claim transactions
+  locally; `src/wrpc.mjs` is the isomorphic wRPC client used to read UTXOs/DAA
+  and broadcast.
+- `public/game-client.js` orchestrates build → sign (Kastle) → broadcast,
+  persists non-secret game metadata in IndexedDB, and re-verifies any relayed
+  opponent data on-chain before use.
+- `public/secrets.js` stores each game's hidden number in IndexedDB using a
+  fresh 32-byte `crypto.getRandomValues` nonce (saved before funds are locked).
+- `public/verify.js` independently re-derives the covenant and checks the
+  prepared creation output before Kastle is asked to sign.
+
+The invite URL (`/join?v=…&game=…&pk=…&c=…&s=…&k=…&d=…&a=…`) carries the full
+non-secret creation state so a joiner can rebuild the covenant without the
+server. An optional untrusted relay (`POST/GET /api/relay/:gameId`) lets the
+opponent discover the join; every relayed payload is re-derived and checked
+against the on-chain covenant before it is trusted. If the relay or backend is
+unavailable, the on-chain DAA timeouts still let players reveal, claim, or
+refund from a compatible client.
+
+The "Find a rival" matchmaking flow is still server-mediated (pairing is a
+server concern); the game itself remains enforced by the covenant.
+
 ## Support
 
 If you like this repo, you can tip me at [https://kas.coffee/danieliyahu](https://kas.coffee/danieliyahu).
