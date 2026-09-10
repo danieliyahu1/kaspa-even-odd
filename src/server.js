@@ -24,6 +24,25 @@ const covenantRoot = fileURLToPath(new URL('../covenant/', import.meta.url));
 const vendorRoot = fileURLToPath(new URL('../vendor/', import.meta.url));
 const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm' };
 
+// Defense-in-depth against XSS reading the browser-local reveal secret. Scripts
+// are same-origin only (no inline/third-party), with 'wasm-unsafe-eval' for the
+// pinned Rusty Kaspa SDK. connect-src stays broad because the trustless client
+// talks to a user-selectable / resolver-provided wRPC node.
+const contentSecurityPolicy = [
+  "default-src 'self'",
+  "script-src 'self' 'wasm-unsafe-eval'",
+  "worker-src 'self' blob:",
+  "child-src 'self' blob:",
+  "style-src 'self'",
+  "img-src 'self' data:",
+  "font-src 'self'",
+  "connect-src 'self' https: wss: ws:",
+  "object-src 'none'",
+  "base-uri 'none'",
+  "form-action 'self'",
+  "frame-ancestors 'none'",
+].join('; ');
+
 if (!isPort(port) || port < 1 || port > 65535) throw new Error('PORT must be an integer between 1 and 65535');
 if (!isPort(metricsPort) || metricsPort < 1 || metricsPort > 65535 || metricsPort === port) throw new Error('METRICS_PORT must be a valid port distinct from PORT');
 if (configuredNetwork !== NETWORK) throw new Error(`KASPA_NETWORK must be ${NETWORK}`);
@@ -72,6 +91,7 @@ const server = createServer((req, res) => {
   res.setHeader('x-content-type-options', 'nosniff');
   res.setHeader('x-frame-options', 'DENY');
   res.setHeader('referrer-policy', 'no-referrer');
+  res.setHeader('content-security-policy', contentSecurityPolicy);
   void routeRequest(req, res, pathname).catch((error) => sendError(res, error));
 });
 

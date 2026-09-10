@@ -210,6 +210,10 @@ backend to move funds:
   opponent data on-chain before use.
 - `public/secrets.js` stores each game's hidden number in IndexedDB using a
   fresh 32-byte `crypto.getRandomValues` nonce (saved before funds are locked).
+  The secret is deleted once the game settles, is claimed, or is refunded.
+- The server sends a strict `Content-Security-Policy` (same-origin scripts,
+  `wasm-unsafe-eval`, no objects/frames) as defense-in-depth against XSS reading
+  the browser-local reveal secret.
 - `public/verify.js` independently re-derives the covenant and checks the
   prepared creation output before KasWare is asked to sign.
 

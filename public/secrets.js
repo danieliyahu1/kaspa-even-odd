@@ -110,3 +110,19 @@ export async function loadSecretForGame(gameId) {
   if (!record) return null;
   return { choice: record.choice, nonceHex: record.nonceHex, commitment: record.commitment };
 }
+
+// Removes a game's reveal secret and its link once the nonce is public or no
+// longer needed (settled, claimed, or refunded). Safe to call repeatedly.
+export async function deleteSecretForGame(gameId) {
+  if (!gameId) return;
+  const link = await get(`${LINK_PREFIX}${gameId}`);
+  const db = await openDb();
+  const store = db.transaction(STORE_NAME, 'readwrite').objectStore(STORE_NAME);
+  store.delete(`${LINK_PREFIX}${gameId}`);
+  if (link?.secretId) store.delete(`${SECRET_PREFIX}${link.secretId}`);
+  await new Promise((resolve, reject) => {
+    store.transaction.oncomplete = () => resolve();
+    store.transaction.onerror = () => reject(store.transaction.error ?? new Error('IndexedDB delete failed'));
+    store.transaction.onabort = () => reject(store.transaction.error ?? new Error('IndexedDB delete aborted'));
+  });
+}

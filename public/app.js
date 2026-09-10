@@ -1,4 +1,4 @@
-import { bindSecretToGame, createRevealSecret, loadSecretForGame, transientCommitment } from '/secrets.js';
+import { bindSecretToGame, createRevealSecret, deleteSecretForGame, loadSecretForGame, transientCommitment } from '/secrets.js';
 import { verifyCreation } from '/verify.js';
 import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame } from '/game-client.js';
 import { logDebug, logInfo, logWarn, logError } from '/log.js';
@@ -533,6 +533,7 @@ async function renderClientGame(gameId, record) {
     : record.joiner?.address === window.__connectedAddress ? 'joiner' : 'viewer';
   const revealed = Boolean(record.reveals?.[role]);
   const settled = ['settled', 'fallback_claimed_broadcast', 'refunded', 'creator_refund_broadcast'].includes(record.status);
+  void forgetRevealSecret(gameId, settled);
   const yourSide = role === 'joiner' ? (record.creator?.side === 'even' ? 'odd' : 'even') : record.creator?.side;
   const invite = role === 'creator' && !record.joiner ? clientInviteUrl(gameId, record) : null;
   app.innerHTML = `
@@ -665,6 +666,7 @@ async function paintGame(gameId, game) {
   const header = paintGameHeader(game.status, role, game);
   const joinerView = role === 'joiner' || (role === 'viewer' && game.canJoin);
   const active = !['settled', 'fallback_claimed', 'refunded', 'creator_refunded'].includes(game.status);
+  void forgetRevealSecret(gameId, !active);
   const revealMine = game.canReveal && (role === 'creator' || role === 'joiner') && !isMyReveal(game, role);
   const waiting = active && !joinerView && !revealMine;
 
@@ -725,6 +727,18 @@ function revealSection(game, role) {
 function isMyReveal(game, role) {
   if (role !== 'creator' && role !== 'joiner') return false;
   return game.revealedPicks?.[role] !== undefined;
+}
+
+// Once the game is over the reveal nonce is public on-chain, so drop the local
+// copy rather than keep a stale secret in IndexedDB indefinitely.
+async function forgetRevealSecret(gameId, terminal) {
+  if (!terminal) return;
+  try {
+    await deleteSecretForGame(gameId);
+    logInfo('reveal_secret_forgotten', { gameId });
+  } catch (error) {
+    logWarn('reveal_secret_forget_failed', { gameId, message: error?.message });
+  }
 }
 
 function bindReveal(gameId) {

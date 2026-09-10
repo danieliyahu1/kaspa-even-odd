@@ -51,6 +51,13 @@ test('server serves the browser application and health probe', async (t) => {
   assert.deepEqual(await health.json().then(({ ok, service, network }) => ({ ok, service, network })), { ok: true, service: 'kaspa-even-odd', network: 'testnet-10' });
   assert.equal(missing.status, 404);
   assert.equal(demoApi.status, 404);
+  const csp = page.headers.get('content-security-policy') ?? '';
+  assert.match(csp, /default-src 'self'/);
+  assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
+  assert.match(csp, /object-src 'none'/);
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.match(csp, /connect-src 'self' https: wss: ws:/);
+  assert.equal(page.headers.get('x-frame-options'), 'DENY');
   const browserSource = await appScript.text();
   const secretsSource = await secretsScript.text();
   assert.equal(verifyScript.status, 200);
@@ -96,6 +103,9 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /verifyCreation\(/);
   assert.match(browserSource, /connectKasware/);
   assert.match(browserSource, /signPskt/);
+  assert.match(browserSource, /deleteSecretForGame/);
+  assert.match(browserSource, /forgetRevealSecret/);
+  assert.match(secretsSource, /deleteSecretForGame/);
   assert.doesNotMatch(browserSource, /kastle/i);
 
   const modulePaths = [
