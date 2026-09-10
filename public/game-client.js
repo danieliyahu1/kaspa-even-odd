@@ -21,6 +21,7 @@ import {
 } from '/src/client-actions.mjs';
 import { createRevealSecret, loadSecretForGame, bindSecretToGame } from '/secrets.js';
 import { FIVE_MINUTE_DAA_OFFSET, FALLBACK_CLAIM_DAA_OFFSET, NO_REVEAL_REFUND_DAA_OFFSET } from '/src/terminal-actions.js';
+import { logDebug, logInfo, logError } from '/log.js';
 
 const NETWORK = 'testnet-10';
 const DEFAULT_FEE_SOMPI = 4_200_000n;
@@ -72,6 +73,7 @@ export async function createGame({ wallet, side, number, stakeKas, rpcUrl }) {
     scriptPublicKey: built.covenantScriptPublicKey,
   });
   await bindSecretToGame(gameId, secret.secretId);
+  logInfo('client_create_broadcast');
   const record = {
     gameId,
     network: NETWORK,
@@ -113,6 +115,7 @@ export async function joinGame({ wallet, gameId, creation, number, rpcUrl }) {
   });
   const signed = await signAndVerify(wallet, built.txJson);
   const transactionId = await rpc.submitSafeJson(signed);
+  logInfo('client_join_broadcast');
   await bindSecretToGame(gameId, secret.secretId);
   const record = await loadGame(gameId) ?? {
     gameId,
@@ -227,10 +230,12 @@ export async function reveal({ wallet, gameId, rpcUrl }) {
   }
   record.updatedAt = new Date().toISOString();
   await saveGame(record);
+  logInfo('client_reveal_broadcast', { winner: built.winner });
   return { gameId, transactionId, winner: built.winner };
 }
 
 export async function refundOrClaim({ wallet, gameId, rpcUrl }) {
+  logInfo('client_recover_start');
   await initClient();
   const rpc = new WrpcClient({ url: rpcUrl });
   const record = await loadGame(gameId);
@@ -446,9 +451,14 @@ export async function waitForCovenant(rpc, { address, transactionId, index, valu
 }
 
 async function signAndVerify(wallet, txJson) {
+  logDebug('client_sign_start');
   const signed = await wallet.signTx(txJson);
-  if (!signed) throw new Error('KasWare did not return a signed transaction');
+  if (!signed) {
+    logError('client_sign_empty');
+    throw new Error('KasWare did not return a signed transaction');
+  }
   verifyWasmSignedSafeJson({ preparedTxJson: txJson, signedTxJson: signed, policy: {} });
+  logDebug('client_sign_verified');
   return signed;
 }
 

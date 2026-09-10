@@ -16,9 +16,13 @@ test('server serves the browser application and health probe', async (t) => {
       METRICS_PORT: String(metricsPort),
       GAME_STORE_PATH: join(directory, 'games.json'),
       RATE_LIMIT_PER_MINUTE: '6',
+      LOG_LEVEL: 'debug',
     },
-    stdio: 'ignore',
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
   t.after(() => child.kill());
   t.after(() => rm(directory, { recursive: true, force: true }));
 
@@ -192,6 +196,15 @@ test('server serves the browser application and health probe', async (t) => {
     statuses.push(response.status);
   }
   assert.ok(statuses.includes(429), `expected a 429 after the limit, saw ${statuses.join(',')}`);
+
+  // Structured logs expose route templates and error codes, never identities.
+  for (let attempt = 0; attempt < 50 && !/server_started/.test(stderr); attempt += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  assert.match(stderr, /server_started/);
+  assert.match(stderr, /http_request/);
+  assert.match(stderr, /route="\/api\/games\/submit"/);
+  assert.doesNotMatch(stderr, /kaspatest:|[0-9a-f]{64}/);
 });
 
 async function waitForServer(url) {

@@ -1,6 +1,7 @@
 import { bindSecretToGame, createRevealSecret, loadSecretForGame, transientCommitment } from '/secrets.js';
 import { verifyCreation } from '/verify.js';
 import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame } from '/game-client.js';
+import { logDebug, logInfo, logWarn, logError } from '/log.js';
 
 const NETWORK = 'testnet-10';
 const KASWARE_NETWORK = 'kaspa_testnet_10';
@@ -21,6 +22,7 @@ async function boot() {
     if (location.pathname === '/rival') return renderMatchmaking();
     renderHome();
   } catch (error) {
+    logError('boot_failed', { code: error.code, message: error.message });
     renderBackendError(error.message);
   }
 }
@@ -69,6 +71,7 @@ async function renderMatchmaking() {
       await refreshMatch();
     } catch (error) {
       button.disabled = false;
+      logError('matchmaking_failed', { code: error.code, message: error.message });
       showNotice('#matchmaking-content', 'Could not find a rival', error.message, 'error');
     }
   }
@@ -128,6 +131,7 @@ async function renderMatchmaking() {
       await advanceMatch();
     } catch (error) {
       button.disabled = false;
+      logError('match_vote_failed', { code: error.code, message: error.message });
       showNotice('#match-vote-notice', 'Game was not started', error.message, 'error');
     }
   }
@@ -218,6 +222,7 @@ async function renderMatchmaking() {
 
   function showMatchStartError(error) {
     started = false;
+    logError('match_start_failed', { code: error.code, message: error.message });
     content.innerHTML = `<div class="notice error"><strong>Game was not started.</strong>${escapeHtml(error.message)}</div><div class="actions"><button type="button" class="primary" id="match-retry">Try again</button></div>`;
     document.querySelector('#match-retry').addEventListener('click', () => {
       started = true;
@@ -326,6 +331,7 @@ function renderCreate() {
       location.href = `/game?id=${result.gameId}`;
     } catch (error) {
       submit.disabled = false;
+      logError('create_game_failed', { code: error.code, message: error.message });
       showNotice('#create-notice', 'Game was not created', error.message, 'error');
     }
   });
@@ -421,6 +427,7 @@ async function bindJoin(gameId, game) {
       await refreshGame(gameId);
     } catch (error) {
       submit.disabled = false;
+      logError('join_game_failed', { code: error.code, message: error.message });
       showNotice('#join-notice', error.message, '', 'error');
     }
   });
@@ -514,6 +521,7 @@ function renderClientJoin(gameId, creation) {
       location.href = `/game?id=${gameId}`;
     } catch (error) {
       submit.disabled = false;
+      logError('client_join_failed', { code: error.code, message: error.message });
       showNotice('#join-notice', error.message, '', 'error');
     }
   });
@@ -557,6 +565,7 @@ async function renderClientGame(gameId, record) {
       location.reload();
     } catch (error) {
       event.target.disabled = false;
+      logError('client_reveal_failed', { code: error.code, message: error.message });
       showNotice('#client-notice', error.message, '', 'error');
     }
   });
@@ -571,6 +580,7 @@ async function renderClientGame(gameId, record) {
       location.reload();
     } catch (error) {
       event.target.disabled = false;
+      logError('client_recover_failed', { code: error.code, message: error.message });
       showNotice('#client-notice', error.message, '', 'error');
     }
   });
@@ -608,7 +618,16 @@ function clientInviteUrl(gameId, record) {
 }
 
 function signWithKasware(provider, txJson) {
-  return provider.signPskt({ txJsonString: txJson });
+  logInfo('kasware_sign_request');
+  return Promise.resolve(provider.signPskt({ txJsonString: txJson }))
+    .then((signed) => {
+      logInfo('kasware_sign_result', { returned: typeof signed === 'string' && signed.length > 0 });
+      return signed;
+    })
+    .catch((error) => {
+      logError('kasware_sign_failed', { code: error?.code, message: error?.message });
+      throw error;
+    });
 }
 
 function kaswareWallet(provider, account) {
@@ -734,6 +753,7 @@ function bindReveal(gameId) {
       await refreshGame(gameId);
     } catch (error) {
       reveal.disabled = false;
+      logError('reveal_failed', { code: error.code, message: error.message });
       if (error.code === 'INVALID_REVEAL') {
         showNotice('#reveal-notice', 'Reveal did not match', 'The saved number no longer matches the locked commitment. You may have started this game in another browser.', 'error');
       } else {
@@ -817,6 +837,7 @@ function bindSafety(gameId, game) {
       await refreshGame(gameId);
     } catch (error) {
       safetyButton.disabled = false;
+      logError('safety_action_failed', { code: error.code, message: error.message });
       showNotice('#game-safety', error.message, '', 'error');
     }
   });
@@ -904,24 +925,47 @@ async function refreshGame(gameId) {
 async function connectKasware(selector) {
   const provider = globalThis.kasware;
   if (!provider) {
+    logError('kasware_missing', { download: KASWARE_DOWNLOAD });
     showNotice(selector, 'Install KasWare to play', 'Even/Odd uses the KasWare wallet.', 'error');
     throw new Error(`KasWare wallet extension is required. Get it at ${KASWARE_DOWNLOAD}`);
   }
+  logInfo('kasware_connect_start', { selector });
   showNotice(selector, 'Connecting to KasWare', 'Confirm the connection in your wallet.', '');
-  const accounts = await provider.requestAccounts().catch(() => null);
+  const accounts = await provider.requestAccounts().catch((error) => {
+    logError('kasware_request_accounts_failed', { message: error?.message });
+    return null;
+  });
   const address = Array.isArray(accounts) ? accounts[0] : accounts;
-  if (!address) throw new Error('KasWare connection was not approved');
+  if (!address) {
+    logWarn('kasware_connection_rejected');
+    throw new Error('KasWare connection was not approved');
+  }
   let publicKey = await provider.getPublicKey();
   let network = await provider.getNetwork();
+  logDebug('kasware_session', { network, hasPublicKey: Boolean(publicKey) });
   if (network !== KASWARE_NETWORK) {
-    if (typeof provider.switchNetwork !== 'function') throw new Error(`Switch KasWare to ${NETWORK}`);
+    if (typeof provider.switchNetwork !== 'function') {
+      logError('kasware_network_unsupported', { network, expected: KASWARE_NETWORK });
+      throw new Error(`Switch KasWare to ${NETWORK}`);
+    }
+    logInfo('kasware_switch_network', { from: network, to: KASWARE_NETWORK });
     await provider.switchNetwork(KASWARE_NETWORK);
     network = await provider.getNetwork();
-    if (network !== KASWARE_NETWORK) throw new Error(`Switch KasWare to ${NETWORK}`);
+    if (network !== KASWARE_NETWORK) {
+      logError('kasware_network_switch_failed', { network, expected: KASWARE_NETWORK });
+      throw new Error(`Switch KasWare to ${NETWORK}`);
+    }
   }
-  if (!address.startsWith('kaspatest:') || !/^[0-9a-f]{64}$|^(02|03)[0-9a-f]{64}$/i.test(publicKey ?? '')) throw new Error('KasWare did not return a valid testnet account');
+  if (!address.startsWith('kaspatest:') || !/^[0-9a-f]{64}$|^(02|03)[0-9a-f]{64}$/i.test(publicKey ?? '')) {
+    logError('kasware_invalid_account', { testnet: address.startsWith('kaspatest:'), publicKeyLength: publicKey?.length });
+    throw new Error('KasWare did not return a valid testnet account');
+  }
   if (publicKey.length === 66) publicKey = publicKey.slice(2);
-  if (typeof provider.signPskt !== 'function') throw new Error('KasWare transaction signing is unavailable');
+  if (typeof provider.signPskt !== 'function') {
+    logError('kasware_signing_unavailable');
+    throw new Error('KasWare transaction signing is unavailable');
+  }
+  logInfo('kasware_connected', { network: KASWARE_NETWORK });
   watchKasware(provider);
   return { provider, account: { address, publicKey } };
 }
@@ -929,12 +973,13 @@ async function connectKasware(selector) {
 function watchKasware(provider) {
   if (window.__kaswareWatched || typeof provider.on !== 'function') return;
   window.__kaswareWatched = true;
-  const forget = () => {
+  const forget = (reason) => () => {
+    logWarn('kasware_session_changed', { reason });
     window.__connectedAddress = undefined;
     try { localStorage.removeItem('kaspa-connected-address'); } catch { /* ignore */ }
   };
-  provider.on('accountsChanged', forget);
-  provider.on('networkChanged', forget);
+  provider.on('accountsChanged', forget('accountsChanged'));
+  provider.on('networkChanged', forget('networkChanged'));
 }
 
 function renderBackendError(message) {
@@ -942,13 +987,23 @@ function renderBackendError(message) {
 }
 
 async function api(url, options = {}) {
-  const response = await fetch(url, { method: options.method ?? 'GET', headers: { 'content-type': 'application/json' }, body: options.body ? JSON.stringify(options.body) : undefined });
+  const method = options.method ?? 'GET';
+  const path = new URL(url, location.origin).pathname;
+  let response;
+  try {
+    response = await fetch(url, { method, headers: { 'content-type': 'application/json' }, body: options.body ? JSON.stringify(options.body) : undefined });
+  } catch (error) {
+    logError('api_unreachable', { method, path, message: error.message });
+    throw error;
+  }
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(body.message ?? body.error ?? 'Backend request failed');
     error.code = body.error;
+    logWarn('api_error', { method, path, status: response.status, code: error.code, message: error.message });
     throw error;
   }
+  logDebug('api_ok', { method, path, status: response.status });
   return body;
 }
 

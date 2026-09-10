@@ -173,6 +173,13 @@ Runtime details:
   `x-forwarded-for`. The in-memory relay expires entries after 10 minutes and
   caps payloads and entry count; reveal preparations are held in memory with a
   TTL instead of being written to the PVC.
+- Logging: `LOG_LEVEL` (default `info`; `debug` adds static-asset requests) and
+  `LOG_FORMAT` (`text` or `json`). Each request logs its method, route template,
+  status, duration, and any protocol error code/message. Logs never contain
+  request bodies, wallet addresses, keys, nonces, signatures, or transaction
+  ids. In the browser, add `?debug=1` (or set `localStorage['kaspa-debug'] = '1'`)
+  for verbose `[even-odd]` console tracing of the wallet flow; warnings and
+  errors are always printed.
 
 Observability:
 

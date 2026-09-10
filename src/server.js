@@ -9,6 +9,7 @@ import { WrpcClient } from './wrpc-client.js';
 import { Metrics, withRpcMetrics } from './metrics.js';
 import { RelayStore } from './relay-store.js';
 import { RateLimiter } from './rate-limit.js';
+import { logger } from './logger.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 const metricsPort = Number.parseInt(process.env.METRICS_PORT ?? '9464', 10);
@@ -52,7 +53,19 @@ const server = createServer((req, res) => {
   const record = () => {
     if (recorded) return;
     recorded = true;
-    metrics.recordHttp({ method: req.method ?? 'GET', route, status: res.statusCode, durationSeconds: (performance.now() - startedAtMs) / 1000 });
+    const durationSeconds = (performance.now() - startedAtMs) / 1000;
+    metrics.recordHttp({ method: req.method ?? 'GET', route, status: res.statusCode, durationSeconds });
+    const fields = {
+      method: req.method ?? 'GET',
+      route,
+      status: res.statusCode,
+      durationMs: Math.round(durationSeconds * 1000),
+      ...(res.kaspaError ?? {}),
+    };
+    if (res.statusCode >= 500) logger.error('http_request', fields);
+    else if (res.statusCode >= 400) logger.warn('http_request', fields);
+    else if (isStaticRoute(route)) logger.debug('http_request', fields);
+    else logger.info('http_request', fields);
   };
   res.on('finish', record);
   res.on('close', record);
@@ -209,7 +222,8 @@ function sendError(res, error) {
   const code = error?.code ?? 'INTERNAL_ERROR';
   const clientError = error instanceof ProtocolError || ['INVALID_JSON', 'REQUEST_TOO_LARGE', 'RELAY_PAYLOAD_TOO_LARGE', 'REQUEST_ABORTED'].includes(code);
   const notFound = ['GAME_NOT_FOUND', 'PREPARATION_NOT_FOUND', 'MATCH_NOT_FOUND'].includes(code);
-  if (!clientError) console.error(error);
+  res.kaspaError = { code, message: error?.message ?? 'Operation failed' };
+  if (!clientError) logger.error('server_error', { code, message: error?.message, stack: error?.stack });
   sendJson(res, notFound ? 404 : clientError ? 400 : 502, {
     error: code,
     message: clientError ? error.message : 'Kaspa testnet10 backend is unavailable',
@@ -255,6 +269,10 @@ function routeLabel(pathname) {
   return 'other';
 }
 
+function isStaticRoute(route) {
+  return ['asset', 'source', 'vendor', 'covenant'].includes(route);
+}
+
 function clientAddress(req) {
   if (trustedProxy) {
     const forwarded = req.headers['x-forwarded-for'];
@@ -285,10 +303,20 @@ metricsServer.headersTimeout = 5_000;
 server.listen(port, '0.0.0.0');
 metricsServer.listen(metricsPort, '0.0.0.0');
 
-function shutdown() {
+logger.info('server_started', {
+  port,
+  metricsPort,
+  network: configuredNetwork,
+  storePath: process.env.GAME_STORE_PATH ?? '.data/games.json',
+  logLevel: logger.level,
+  pid: process.pid,
+});
+
+function shutdown(signal) {
+  logger.info('server_stopping', { signal });
   server.close(async () => {
-    try { await rpc.disconnect(); } catch (disconnectError) { console.error(disconnectError); }
-    metricsServer.close(() => process.exit(0));
+    try { await rpc.disconnect(); } catch (disconnectError) { logger.error('rpc_disconnect_failed', { message: disconnectError?.message, stack: disconnectError?.stack }); }
+    metricsServer.close(() => { logger.info('server_stopped'); process.exit(0); });
   });
   setTimeout(() => process.exit(1), 10_000).unref();
 }
