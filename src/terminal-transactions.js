@@ -9,6 +9,7 @@ import {
 } from './terminal-actions.js';
 import { parityOutcome, resolveReveal, verifyRevealPreimage } from './reveal.js';
 import { loadWasmSdk, verifyWasmSignedSafeJson } from './wasm-transaction.js';
+import { describeTransactionChanges, unsignedInputs } from './transaction-diagnostics.js';
 
 export const TERMINAL_ENTRIES = Object.freeze({
   reveal: 'reveal',
@@ -228,10 +229,11 @@ export function verifySignedTerminalTransaction({ prepared, signedTxJson }) {
   const expected = JSON.parse(preparedTxJson);
   const signed = JSON.parse(signedTxJson);
   if (signed.inputs[0]?.signatureScript !== expected.inputs[0]?.signatureScript) {
-    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Wallet changed the covenant invocation');
+    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', `Wallet changed the covenant invocation (${describeTransactionChanges(expected, signed)})`);
   }
-  if (signed.inputs.slice(1).some((input) => typeof input.signatureScript !== 'string' || input.signatureScript.length === 0)) {
-    throw new ProtocolError('SIGNING_FAILED', 'Wallet did not sign every player funding input');
+  const unsigned = unsignedInputs(signed.inputs, 1);
+  if (unsigned.length > 0) {
+    throw new ProtocolError('SIGNING_FAILED', `Wallet did not sign every player funding input (unsigned ${unsigned.join(',')})`);
   }
   return signedTxJson;
 }

@@ -1,6 +1,7 @@
 import { blake2b256 } from './hashes/blake2b.mjs';
 import { hexToBytes, bytesToHex } from './hashes/hex.mjs';
 import { ProtocolError } from './protocol.js';
+import { describeTransactionChanges } from './transaction-diagnostics.js';
 
 const COVENANT_ID_DOMAIN = new TextEncoder().encode('CovenantID');
 const TRANSACTION_VERSION = 1;
@@ -114,7 +115,7 @@ export function verifySignedCreationSafeJson({ preparedTxJson, signedTxJson, req
   const prepared = validateCreationTransaction(preparedTxJson, request, policy);
   const signed = validateCreationTransaction(signedTxJson, request, policy);
   if (stableJson(withoutSignatures(prepared)) !== stableJson(withoutSignatures(signed))) {
-    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Wallet changed fields outside input signature scripts');
+    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', `Wallet changed fields outside input signature scripts (${describeTransactionChanges(prepared, signed)})`);
   }
   if (!signed.inputs.some((input) => typeof input.signatureScript === 'string' && input.signatureScript.length > 0)) {
     throw new ProtocolError('SIGNING_FAILED', 'Wallet returned no input signatures');

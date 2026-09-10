@@ -1,6 +1,7 @@
 import { ProtocolError } from './protocol.js';
 import { buildKccEntrySignatureScript } from './terminal-transactions.js';
 import { loadWasmSdk, verifyWasmSignedSafeJson } from './wasm-transaction.js';
+import { describeTransactionChanges, unsignedInputs } from './transaction-diagnostics.js';
 import { hexToBytes } from './hashes/hex.mjs';
 
 export function prepareJoinTransaction({ game, joinerPublicKey, joinerCommitment, gameInput, feeInputs = [], feeSompi = 0n, change, continuationScriptPublicKey, continuationCovenant }) {
@@ -58,10 +59,11 @@ export function verifySignedJoinTransaction({ preparedTxJson, signedTxJson }) {
   const prepared = JSON.parse(preparedTxJson);
   const signed = JSON.parse(signedTxJson);
   if (signed.inputs[0]?.signatureScript !== prepared.inputs[0]?.signatureScript) {
-    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', 'Wallet changed the covenant invocation');
+    throw new ProtocolError('SIGNED_TRANSACTION_MISMATCH', `Wallet changed the covenant invocation (${describeTransactionChanges(prepared, signed)})`);
   }
-  if (signed.inputs.slice(1).some((input) => typeof input.signatureScript !== 'string' || input.signatureScript.length === 0)) {
-    throw new ProtocolError('SIGNING_FAILED', 'Wallet did not sign every Player B funding input');
+  const unsigned = unsignedInputs(signed.inputs, 1);
+  if (unsigned.length > 0) {
+    throw new ProtocolError('SIGNING_FAILED', `Wallet did not sign every Player B funding input (unsigned ${unsigned.join(',')})`);
   }
   return signedTxJson;
 }
