@@ -2,6 +2,7 @@ import { bindSecretToGame, createRevealSecret, loadSecretForGame, transientCommi
 import { verifyCreation } from '/verify.js';
 import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame } from '/game-client.js';
 import { logDebug, logInfo, logWarn, logError } from '/log.js';
+import { signWithKasware as kaswareSignPskt } from '/kasware-signing.js';
 
 const NETWORK = 'testnet-10';
 const KASWARE_NETWORK = 'kaspa_testnet_10';
@@ -619,7 +620,7 @@ function clientInviteUrl(gameId, record) {
 
 function signWithKasware(provider, txJson) {
   logInfo('kasware_sign_request');
-  return Promise.resolve(provider.signPskt({ txJsonString: txJson }))
+  return Promise.resolve(kaswareSignPskt(provider, txJson))
     .then((signed) => {
       logInfo('kasware_sign_result', { returned: typeof signed === 'string' && signed.length > 0 });
       return signed;
