@@ -287,7 +287,6 @@ export class BackendGameService {
       playerAddress: player.address,
       role: player.role,
       choice,
-      nonceHex,
       txJson,
       transaction: prepared.transaction,
       feeSompi: String(feeSompi),
