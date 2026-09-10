@@ -481,6 +481,9 @@ export class BackendGameService {
         ? (confirmation.status === 'confirmed' ? 'joined' : refreshed.status)
       : (confirmation.status === 'confirmed' ? 'waiting_for_player_b' : confirmation.status);
     if (status !== refreshed.status) await this.store.saveGame({ ...refreshed, status, confirmation, updatedAt: new Date().toISOString() });
+    const safetyAction = status === 'first_revealed' ? 'fallback_claim'
+      : status === 'joined' || status === 'refund_partial' ? 'refund_player'
+      : status === 'waiting_for_player_b' ? 'creator_refund' : null;
     return {
       gameId: id,
       network: NETWORK,
@@ -500,10 +503,27 @@ export class BackendGameService {
       matchmaking: Boolean(refreshed.matchId),
       revealedPicks: Object.fromEntries(confirmedReveals.map((reveal) => [reveal.role, reveal.choice])),
       canReveal: ['joined', 'first_revealed'].includes(status),
-      safetyAction: status === 'first_revealed' ? 'fallback_claim'
-        : status === 'joined' || status === 'refund_partial' ? 'refund_player'
-        : status === 'waiting_for_player_b' ? 'creator_refund' : null,
+      safetyAction,
+      // Public location of the covenant output the client must read to decide
+      // whether the refund/claim wait has elapsed. The client reads the chain.
+      safetyOutput: safetyAction === 'fallback_claim' ? this.#revealContinuationOutput(refreshed)
+        : safetyAction === 'refund_player' ? this.#refundCurrentOutput(refreshed) : null,
     };
+  }
+
+  #revealContinuationOutput(record) {
+    const reveal = (record.reveals ?? []).find((item) => item.status === 'confirmed');
+    if (!reveal?.continuationAddress) return null;
+    return { address: reveal.continuationAddress, outputIndex: 0, scriptPublicKey: reveal.continuationScriptPublicKey };
+  }
+
+  #refundCurrentOutput(record) {
+    const confirmedRefund = (record.safetyActions ?? []).find((item) => item.action === 'refund_player' && item.status === 'confirmed');
+    if (confirmedRefund?.continuationAddress) {
+      return { address: confirmedRefund.continuationAddress, outputIndex: confirmedRefund.continuationOutputIndex ?? 1, scriptPublicKey: confirmedRefund.continuationScriptPublicKey };
+    }
+    if (record.join) return { address: record.join.joinedAddress, outputIndex: 0, scriptPublicKey: record.join.joinedScriptPublicKey };
+    return null;
   }
 
   #player(record, request, address, publicKey) {

@@ -20,7 +20,7 @@ import {
   deriveJoinedCovenant,
 } from '/src/client-actions.mjs';
 import { createRevealSecret, loadSecretForGame, bindSecretToGame } from '/secrets.js';
-import { FIVE_MINUTE_DAA_OFFSET, FALLBACK_CLAIM_DAA_OFFSET, NO_REVEAL_REFUND_DAA_OFFSET } from '/src/terminal-actions.js';
+import { FIVE_MINUTE_DAA_OFFSET, FALLBACK_CLAIM_DAA_OFFSET, NO_REVEAL_REFUND_DAA_OFFSET, safetyReadiness } from '/src/terminal-actions.js';
 import { logDebug, logInfo, logError } from '/log.js';
 
 const NETWORK = 'testnet-10';
@@ -433,6 +433,21 @@ export async function readFeerate(rpc) {
 export async function readDaa(rpc) {
   const dag = await rpc.getBlockDagInfo();
   return BigInt(dag.virtualDaaScore ?? dag.virtualDaaScoreString);
+}
+
+// Reads the chain directly to decide whether a refund/claim is available yet.
+// The server only points at the public covenant output; the timing truth comes
+// from the node, and the covenant enforces it again on-chain.
+export async function readRecoveryReadiness({ rpcUrl, action, deadlineDaa, output }) {
+  const rpc = new WrpcClient({ url: rpcUrl });
+  const currentDaa = await readDaa(rpc);
+  if (action === 'creator_refund') return safetyReadiness(currentDaa, BigInt(deadlineDaa));
+  const offset = action === 'fallback_claim' ? FALLBACK_CLAIM_DAA_OFFSET : NO_REVEAL_REFUND_DAA_OFFSET;
+  const descriptor = { address: output?.address, outputIndex: output?.outputIndex ?? 0, scriptPublicKey: output?.scriptPublicKey };
+  if (!descriptor.address) return { ready: false, remainingSeconds: null };
+  const found = await findUtxo(rpc, descriptor);
+  if (!found) return { ready: false, remainingSeconds: null };
+  return safetyReadiness(currentDaa, found.blockDaaScore + offset);
 }
 
 export async function waitForCovenant(rpc, { address, transactionId, index, valueSompi, scriptPublicKey }) {

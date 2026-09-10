@@ -6,6 +6,7 @@ import {
   NO_REVEAL_REFUND_DAA_OFFSET,
   resolveFallbackClaim,
   resolveIndividualRefund,
+  safetyReadiness,
   TERMINAL_COPY,
   terminalActionView,
   validateFallbackClaimTemplate,
@@ -26,6 +27,13 @@ test('pins five-minute testnet-10 DAA deadlines', () => {
   assert.equal(FALLBACK_CLAIM_DAA_OFFSET, 3_000n);
   assert.equal(NO_REVEAL_REFUND_DAA_OFFSET, 3_000n);
   assert.equal(deadlineAfterDaa(10n), 3_010n);
+});
+
+test('reports refund readiness from DAA scores', () => {
+  assert.deepEqual(safetyReadiness(1_000n, 4_000n), { ready: false, remainingSeconds: 300 });
+  assert.deepEqual(safetyReadiness(3_999n, 4_000n), { ready: false, remainingSeconds: 1 });
+  assert.deepEqual(safetyReadiness(4_000n, 4_000n), { ready: true, remainingSeconds: 0 });
+  assert.deepEqual(safetyReadiness(5_000n, 4_000n), { ready: true, remainingSeconds: 0 });
 });
 
 test('fallback claim is unavailable until first reveal plus fallback deadline', () => {

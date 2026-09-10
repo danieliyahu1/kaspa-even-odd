@@ -7,6 +7,16 @@ export const FIVE_MINUTE_DAA_OFFSET = 300n * TESTNET10_DAA_PER_SECOND;
 export const FALLBACK_CLAIM_DAA_OFFSET = FIVE_MINUTE_DAA_OFFSET;
 export const NO_REVEAL_REFUND_DAA_OFFSET = FIVE_MINUTE_DAA_OFFSET;
 
+// Pure readiness check shared by the backend and the browser: a refund/claim is
+// available once the current DAA score reaches the anchor DAA score.
+export function safetyReadiness(currentDaaScore, readyAtDaa) {
+  const current = BigInt(currentDaaScore);
+  const readyAt = BigInt(readyAtDaa);
+  const ready = current >= readyAt;
+  const remainingSeconds = ready ? 0 : Math.ceil(Number(readyAt - current) / Number(TESTNET10_DAA_PER_SECOND));
+  return { ready, remainingSeconds };
+}
+
 export const TERMINAL_COPY = Object.freeze({
   fallbackUnavailable: 'The fallback claim is not available yet.',
   fallbackConfirmed: 'Fallback claim confirmed. You receive the pot.',

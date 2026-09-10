@@ -1,6 +1,6 @@
 import { bindSecretToGame, createRevealSecret, deleteSecretForGame, loadSecretForGame, transientCommitment } from '/secrets.js';
 import { verifyCreation } from '/verify.js';
-import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame } from '/game-client.js';
+import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame, readRecoveryReadiness } from '/game-client.js';
 import { logDebug, logInfo, logWarn, logError } from '/log.js';
 import { signWithKasware as kaswareSignPskt } from '/kasware-signing.js';
 
@@ -442,7 +442,10 @@ async function renderGame(gameId) {
   if (local) return renderClientGame(gameId, local);
   scheduleGameRefresh(gameId);
   try {
-    paintGame(gameId, await api(`/api/games/${gameId}`));
+    const game = await api(`/api/games/${gameId}`);
+    const recovery = await readRecovery(game.safetyAction
+      ? { action: game.safetyAction, deadlineDaa: game.deadlineDaa, output: game.safetyOutput } : null);
+    paintGame(gameId, game, recovery);
   } catch (error) {
     renderBackendError(error.message);
   }
@@ -531,13 +534,20 @@ function renderClientJoin(gameId, creation) {
 }
 
 async function renderClientGame(gameId, record) {
-  const role = record.creator?.address === window.__connectedAddress ? 'creator'
-    : record.joiner?.address === window.__connectedAddress ? 'joiner' : 'viewer';
+  const role = clientRole(record);
   const revealed = Boolean(record.reveals?.[role]);
   const settled = ['settled', 'fallback_claimed_broadcast', 'refunded', 'creator_refund_broadcast'].includes(record.status);
   void forgetRevealSecret(gameId, settled);
   const yourSide = role === 'joiner' ? (record.creator?.side === 'even' ? 'odd' : 'even') : record.creator?.side;
   const invite = role === 'creator' && !record.joiner ? clientInviteUrl(gameId, record) : null;
+  const recovery = await readRecovery(clientRecovery(record, role));
+  const recoverControl = (label) => {
+    const disabled = recovery ? !recovery.ready : false;
+    const wait = disabled && recovery.remainingSeconds != null
+      ? `<p class="muted-note" data-recovery-wait data-remaining="${recovery.remainingSeconds}">Available in ${formatWait(recovery.remainingSeconds)}</p>`
+      : '';
+    return `<div class="actions"><button type="button" class="outline" data-action="client-recover" data-recovery-button ${disabled ? 'disabled' : ''}>${label}</button></div>${wait}`;
+  };
   app.innerHTML = `
     <a class="back" href="/">Exit</a>
     <section class="panel" aria-label="Game">
@@ -550,8 +560,8 @@ async function renderClientGame(gameId, record) {
         ${yourSide ? `<p class="muted-note">You're ${escapeHtml(capitalize(yourSide))}.</p>` : ''}
         ${invite ? `<div class="invite-box"><p class="muted-note">Share this link with your friend:</p><button class="share-button" data-action="copy-invite">Copy link</button></div>` : ''}
         ${record.joiner && !settled && !revealed ? '<div class="actions"><button type="button" class="primary" data-action="client-reveal">Reveal number</button></div>' : ''}
-        ${record.joiner && !settled ? '<div class="actions"><button type="button" class="outline" data-action="client-recover">Claim or refund</button></div>' : ''}
-        ${!record.joiner ? '<div class="actions"><button type="button" class="outline" data-action="client-recover">Cancel and refund</button></div>' : ''}
+        ${record.joiner && !settled ? recoverControl('Claim or refund') : ''}
+        ${!record.joiner ? recoverControl('Cancel and refund') : ''}
         <div id="client-notice"></div>
         <p class="muted-note">This game is enforced by the Kaspa covenant. The site cannot move your funds or change the result.</p>
       </div>
@@ -588,11 +598,15 @@ async function renderClientGame(gameId, record) {
       showNotice('#client-notice', error.message, '', 'error');
     }
   });
+  window.__clientSignature = `${clientSignature(record)}|${recovery ? recovery.ready : ''}`;
+  bindRecoveryCountdown(recovery, async () => {
+    const fresh = await loadHydratedGame(gameId).catch(() => null);
+    if (fresh) renderClientGame(gameId, fresh);
+  });
   scheduleClientRefresh(gameId, record);
 }
 
 function scheduleClientRefresh(gameId, record) {
-  window.__clientSignature = clientSignature(record);
   clearInterval(window.__clientRefresh);
   window.__clientRefresh = setInterval(async () => {
     if (!(location.pathname === '/game' || location.pathname === '/join') || (params.get('id') ?? params.get('game')) !== gameId) {
@@ -600,12 +614,68 @@ function scheduleClientRefresh(gameId, record) {
       return;
     }
     const fresh = await loadHydratedGame(gameId).catch(() => null);
-    if (fresh && clientSignature(fresh) !== window.__clientSignature) renderClientGame(gameId, fresh);
+    if (!fresh) return;
+    const recovery = await readRecovery(clientRecovery(fresh, clientRole(fresh)));
+    const signature = `${clientSignature(fresh)}|${recovery ? recovery.ready : ''}`;
+    if (signature !== window.__clientSignature) renderClientGame(gameId, fresh);
   }, 4_000);
 }
 
 function clientSignature(record) {
   return [record.joiner?.address ?? '', record.status ?? '', record.firstRevealer ?? '', Object.keys(record.reveals ?? {}).join(',')].join('|');
+}
+
+function formatWait(seconds) {
+  const total = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
+}
+
+// The refund/claim button state comes from the chain, not the server: the
+// server only points at the public covenant output to read.
+async function readRecovery(request) {
+  if (!request) return null;
+  try {
+    return await readRecoveryReadiness({ rpcUrl: preferredRpcUrl(), ...request });
+  } catch (error) {
+    logWarn('recovery_readiness_failed', { message: error?.message });
+    return { ready: false, remainingSeconds: null };
+  }
+}
+
+function clientRole(record) {
+  return record.creator?.address === window.__connectedAddress ? 'creator'
+    : record.joiner?.address === window.__connectedAddress ? 'joiner' : 'viewer';
+}
+
+function clientRecovery(record, role) {
+  if (!record.joiner) return { action: 'creator_refund', deadlineDaa: record.deadlineDaa };
+  const revealedCount = Object.keys(record.reveals ?? {}).length;
+  if (revealedCount === 1 && record.reveals?.[role]) {
+    return { action: 'fallback_claim', output: { address: record.continuationAddress, outputIndex: 0, scriptPublicKey: record.continuationScriptPublicKey } };
+  }
+  if (revealedCount === 0) {
+    return { action: 'refund_player', output: { address: record.joinedAddress, outputIndex: 0, scriptPublicKey: record.joinedScriptPublicKey } };
+  }
+  return null;
+}
+
+function bindRecoveryCountdown(recovery, refresh) {
+  clearInterval(window.__recoveryTicker);
+  const element = document.querySelector('[data-recovery-wait]');
+  const button = document.querySelector('[data-recovery-button]');
+  if (!element || !button || !recovery || recovery.ready) return;
+  let remaining = Number(element.dataset.remaining ?? '0');
+  if (!Number.isFinite(remaining) || remaining <= 0) return;
+  window.__recoveryTicker = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(window.__recoveryTicker);
+      element.textContent = 'Available now';
+      void refresh();
+      return;
+    }
+    element.textContent = `Available in ${formatWait(remaining)}`;
+  }, 1000);
 }
 
 function clientInviteUrl(gameId, record) {
@@ -662,7 +732,7 @@ function paintGameHeader(status, role, game) {
   return { title: 'Locking it in.', loading: true };
 }
 
-async function paintGame(gameId, game) {
+async function paintGame(gameId, game, recovery) {
   const role = detectRole(game);
   const yourSide = role === 'creator' ? game.creator?.side : role === 'joiner' ? (game.creator?.side === 'even' ? 'odd' : 'even') : null;
   const header = paintGameHeader(game.status, role, game);
@@ -682,7 +752,7 @@ async function paintGame(gameId, game) {
         ${gameDetails(game)}
         ${active ? (joinerView ? joinSection(game, yourSide ?? (game.creator?.side === 'even' ? 'odd' : 'even')) : '') + inviteBox(game, waiting) + (revealMine ? revealSection(game, role) : '') : ''}
         ${resultOverlay(game, role)}
-        ${safetySection(game)}
+        ${safetySection(game, recovery)}
         ${terminalSection(game)}
       </div>
     </section>`;
@@ -691,6 +761,7 @@ async function paintGame(gameId, game) {
   bindReveal(gameId);
   bindShare();
   bindSafety(gameId, game);
+  bindRecoveryCountdown(recovery, () => refreshGame(gameId));
   bindPlayAgain();
 }
 
@@ -803,19 +874,27 @@ function flashCopy(button) {
   setTimeout(() => { button.textContent = original; }, 1600);
 }
 
-function safetySection(game) {
+function safetySection(game, recovery) {
+  const readiness = recovery ?? { ready: true, remainingSeconds: 0 };
+  const control = (label) => {
+    const disabled = !readiness.ready;
+    const wait = disabled && readiness.remainingSeconds != null
+      ? `<p class="muted-note" data-recovery-wait data-remaining="${readiness.remainingSeconds}">Available in ${formatWait(readiness.remainingSeconds)}</p>`
+      : '';
+    return `<div class="actions"><button type="button" class="outline" data-action="safety" data-recovery-button ${disabled ? 'disabled' : ''}>${label}</button></div>${wait}`;
+  };
   if (game.safetyAction === 'fallback_claim' && game.status === 'first_revealed') {
     return `
       <div id="game-safety" class="safety">
         <p class="lead">If your ${game.matchmaking ? 'rival' : 'friend'} never reveals</p>
         <p class="muted-note">You can claim the whole pot after the wait.</p>
-        <div class="actions"><button type="button" class="outline" data-action="safety">Claim pot</button></div>
+        ${control('Claim pot')}
       </div>`;
   }
   if (game.safetyAction === 'creator_refund' && game.status === 'waiting_for_player_b') {
     return `
       <div id="game-safety" class="safety">
-        <div class="actions"><button type="button" class="outline" data-action="safety">Cancel game</button></div>
+        ${control('Cancel game')}
       </div>`;
   }
   if (game.safetyAction === 'refund_player' && (game.status === 'joined' || game.status === 'refund_partial')) {
@@ -823,7 +902,7 @@ function safetySection(game) {
       <div id="game-safety" class="safety">
         <p class="lead">No one revealed</p>
         <p class="muted-note">You can take back your stake after the wait.</p>
-        <div class="actions"><button type="button" class="outline" data-action="safety">Refund my stake</button></div>
+        ${control('Refund my stake')}
       </div>`;
   }
   return '';
@@ -838,7 +917,7 @@ function terminalSection(game) {
 
 function bindSafety(gameId, game) {
   const safetyButton = document.querySelector('[data-action="safety"]');
-  if (!safetyButton) return;
+  if (!safetyButton || safetyButton.disabled) return;
   safetyButton.addEventListener('click', async () => {
     safetyButton.disabled = true;
     try {
@@ -931,9 +1010,12 @@ async function refreshGame(gameId) {
     if (!(location.pathname === '/game' || location.pathname === '/join')) return;
     if ((params.get('id') ?? params.get('game')) !== gameId) return;
     const game = await api(`/api/games/${gameId}`);
-    if (window.__gameStatus === game.status) return;
-    window.__gameStatus = game.status;
-    await paintGame(gameId, game);
+    const recovery = await readRecovery(game.safetyAction
+      ? { action: game.safetyAction, deadlineDaa: game.deadlineDaa, output: game.safetyOutput } : null);
+    const signature = `${game.status}|${recovery ? recovery.ready : ''}`;
+    if (window.__gameStatus === signature) return;
+    window.__gameStatus = signature;
+    await paintGame(gameId, game, recovery);
   } catch {
     // A transient refresh may race a broadcast; the next tick retries.
   }

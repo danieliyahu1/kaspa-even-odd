@@ -106,6 +106,9 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /deleteSecretForGame/);
   assert.match(browserSource, /forgetRevealSecret/);
   assert.match(secretsSource, /deleteSecretForGame/);
+  assert.match(browserSource, /readRecoveryReadiness/);
+  assert.match(browserSource, /safetyOutput/);
+  assert.match(browserSource, /data-recovery-wait/);
   assert.doesNotMatch(browserSource, /kastle/i);
 
   const modulePaths = [
