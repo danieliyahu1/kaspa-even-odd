@@ -162,7 +162,13 @@ Runtime details:
   `ClusterSecretStore` contract is unused because the app has no server-side
   secret. Wallet keys never leave the browser.
 - Required network: `KASPA_NETWORK=testnet-10` (the process fails closed for
-  any other value); `KASPA_WRPC_URL` can pin a testnet-10 wRPC node.
+  any other value); `KASPA_WRPC_URL` can pin the server's testnet-10 wRPC node.
+  The browser reads and broadcasts over WebSocket; `/api/config` advertises the
+  browser endpoint, which defaults to the pinned public
+  `wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh` and can be overridden
+  per deployment with `KASPA_WRPC_BROWSER_URL` (or per client with `?node=`). The
+  web SDK resolver's `https://` endpoints are not used because browsers block
+  them via CORS.
 - Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
   `/var/lib/kaspa-even-odd` stores non-secret backend game metadata. It is
   `ReadWriteOnce` and only ever mounted by a single replica; the Deployment uses

@@ -12,6 +12,7 @@ import { FALLBACK_CLAIM_DAA_OFFSET, FIVE_MINUTE_DAA_OFFSET, NO_REVEAL_REFUND_DAA
 import { NETWORK, PROTOCOL_VERSION, ProtocolError, validateGameId } from './protocol.js';
 import { noopMetrics } from './metrics.js';
 import { EphemeralPreparations } from './ephemeral-preparations.js';
+import { DEFAULT_WRPC_URL } from './wrpc.mjs';
 
 const MATCH_STAKE_KAS = 1;
 
@@ -25,7 +26,14 @@ export class BackendGameService {
 
   async networkStatus() {
     const dag = await this.rpc.getBlockDagInfo();
-    return { network: NETWORK, protocolVersion: PROTOCOL_VERSION, virtualDaaScore: String(dag.virtualDaaScore ?? dag.virtualDaaScoreString) };
+    return {
+      network: NETWORK,
+      protocolVersion: PROTOCOL_VERSION,
+      virtualDaaScore: String(dag.virtualDaaScore ?? dag.virtualDaaScoreString),
+      // Browser-usable wRPC endpoint. Distinct from the server's own
+      // KASPA_WRPC_URL so a private/internal node URL never leaks to clients.
+      wrpcUrl: process.env.KASPA_WRPC_BROWSER_URL ?? DEFAULT_WRPC_URL,
+    };
   }
 
   async joinMatchmaking(input) {

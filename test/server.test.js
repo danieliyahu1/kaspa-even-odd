@@ -109,7 +109,12 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /readRecoveryReadiness/);
   assert.match(browserSource, /safetyOutput/);
   assert.match(browserSource, /data-recovery-wait/);
+  assert.match(browserSource, /DEFAULT_WRPC_URL/);
+  assert.match(browserSource, /recoveryControlState/);
   assert.doesNotMatch(browserSource, /kastle/i);
+
+  const wrpcSource = await (await fetch(`http://127.0.0.1:${port}/src/wrpc.mjs`)).text();
+  assert.match(wrpcSource, /DEFAULT_WRPC_URL = 'wss:\/\/vector-10\.kaspa\.green\/kaspa\/testnet-10\/wrpc\/borsh'/);
 
   const modulePaths = [
     '/game-client.js',

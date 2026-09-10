@@ -97,3 +97,26 @@ test('matchmaking creation starts as soon as the creator locks a vote', async (t
     (error) => error.code === 'NO_UTXOS',
   );
 });
+
+test('network status exposes a browser-usable wRPC endpoint', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rpc = { getBlockDagInfo: async () => ({ virtualDaaScore: '100' }) };
+  const service = new BackendGameService({ rpc, store: new BackendGameStore(join(directory, 'games.json')) });
+
+  const previous = process.env.KASPA_WRPC_BROWSER_URL;
+  try {
+    delete process.env.KASPA_WRPC_BROWSER_URL;
+    const status = await service.networkStatus();
+    assert.equal(status.network, 'testnet-10');
+    assert.equal(status.virtualDaaScore, '100');
+    // Default must be a wss:// URL: the web SDK resolver returns https://
+    // endpoints that browsers block via CORS.
+    assert.match(status.wrpcUrl, /^wss:\/\//);
+    process.env.KASPA_WRPC_BROWSER_URL = 'wss://example.test/kaspa/testnet-10/wrpc/borsh';
+    assert.equal((await service.networkStatus()).wrpcUrl, 'wss://example.test/kaspa/testnet-10/wrpc/borsh');
+  } finally {
+    if (previous === undefined) delete process.env.KASPA_WRPC_BROWSER_URL;
+    else process.env.KASPA_WRPC_BROWSER_URL = previous;
+  }
+});

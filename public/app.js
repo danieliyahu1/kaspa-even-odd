@@ -1,6 +1,7 @@
 import { bindSecretToGame, createRevealSecret, deleteSecretForGame, loadSecretForGame, transientCommitment } from '/secrets.js';
 import { verifyCreation } from '/verify.js';
 import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame, readRecoveryReadiness } from '/game-client.js';
+import { DEFAULT_WRPC_URL } from '/src/wrpc.mjs';
 import { logDebug, logInfo, logWarn, logError } from '/log.js';
 import { signWithKasware as kaswareSignPskt } from '/kasware-signing.js';
 
@@ -9,13 +10,17 @@ const KASWARE_NETWORK = 'kaspa_testnet_10';
 const app = document.querySelector('#app');
 const params = new URLSearchParams(location.search);
 const KASWARE_DOWNLOAD = 'https://chromewebstore.google.com/detail/kasware-wallet/hklhheigdmpoolooomdihmhlpjjdbklf';
+let serverWrpcUrl = null;
 
 boot();
 
 async function boot() {
   try {
     await api('/api/config')
-      .then((config) => { if (config.network !== NETWORK) throw new Error(`Backend must use ${NETWORK}`); })
+      .then((config) => {
+        if (config.network !== NETWORK) throw new Error(`Backend must use ${NETWORK}`);
+        if (typeof config.wrpcUrl === 'string' && config.wrpcUrl) serverWrpcUrl = config.wrpcUrl;
+      })
       .catch(() => { /* The app must run even if the coordinating server is gone. */ });
     if (location.pathname === '/join') return renderJoinEntry(params.get('game'));
     if (location.pathname === '/game') return renderGame(params.get('id') ?? params.get('game'));
@@ -541,13 +546,7 @@ async function renderClientGame(gameId, record) {
   const yourSide = role === 'joiner' ? (record.creator?.side === 'even' ? 'odd' : 'even') : record.creator?.side;
   const invite = role === 'creator' && !record.joiner ? clientInviteUrl(gameId, record) : null;
   const recovery = await readRecovery(clientRecovery(record, role));
-  const recoverControl = (label) => {
-    const disabled = recovery ? !recovery.ready : false;
-    const wait = disabled && recovery.remainingSeconds != null
-      ? `<p class="muted-note" data-recovery-wait data-remaining="${recovery.remainingSeconds}">Available in ${formatWait(recovery.remainingSeconds)}</p>`
-      : '';
-    return `<div class="actions"><button type="button" class="outline" data-action="client-recover" data-recovery-button ${disabled ? 'disabled' : ''}>${label}</button></div>${wait}`;
-  };
+  const recoverControl = (label) => recoveryControlHtml(recovery, label, 'client-recover');
   app.innerHTML = `
     <a class="back" href="/">Exit</a>
     <section class="panel" aria-label="Game">
@@ -631,15 +630,37 @@ function formatWait(seconds) {
 }
 
 // The refund/claim button state comes from the chain, not the server: the
-// server only points at the public covenant output to read.
+// server only points at the public covenant output to read. If the chain can't
+// be reached we fail open (`ready: null`) and let the covenant enforce the wait
+// on-chain, instead of wedging the button disabled forever.
 async function readRecovery(request) {
   if (!request) return null;
   try {
     return await readRecoveryReadiness({ rpcUrl: preferredRpcUrl(), ...request });
   } catch (error) {
     logWarn('recovery_readiness_failed', { message: error?.message });
-    return { ready: false, remainingSeconds: null };
+    return { ready: null, remainingSeconds: null };
   }
+}
+
+// Tri-state readiness: `true` = available, `false` + countdown = wait, `null` =
+// unknown (fail open; the covenant still rejects a premature claim on-chain).
+function recoveryControlState(recovery) {
+  if (!recovery || recovery.ready === true) return { disabled: false, wait: null, unknown: false };
+  if (recovery.ready === false && recovery.remainingSeconds != null) {
+    return { disabled: true, wait: Number(recovery.remainingSeconds), unknown: false };
+  }
+  return { disabled: false, wait: null, unknown: true };
+}
+
+function recoveryControlHtml(recovery, label, action) {
+  const state = recoveryControlState(recovery);
+  const note = state.wait != null
+    ? `<p class="muted-note" data-recovery-wait data-remaining="${state.wait}">Available in ${formatWait(state.wait)}</p>`
+    : state.unknown
+      ? '<p class="muted-note">Can\'t reach the chain right now; the covenant still enforces the wait.</p>'
+      : '';
+  return `<div class="actions"><button type="button" class="outline" data-action="${action}" data-recovery-button ${state.disabled ? 'disabled' : ''}>${label}</button></div>${note}`;
 }
 
 function clientRole(record) {
@@ -718,7 +739,8 @@ function preferredRpcUrl() {
     try { localStorage.setItem('kaspa-rpc-url', fromParam); } catch { /* ignore */ }
     return fromParam;
   }
-  try { return localStorage.getItem('kaspa-rpc-url') || undefined; } catch { return undefined; }
+  try { return localStorage.getItem('kaspa-rpc-url') || serverWrpcUrl || DEFAULT_WRPC_URL; }
+  catch { return serverWrpcUrl || DEFAULT_WRPC_URL; }
 }
 
 function paintGameHeader(status, role, game) {
@@ -875,14 +897,7 @@ function flashCopy(button) {
 }
 
 function safetySection(game, recovery) {
-  const readiness = recovery ?? { ready: true, remainingSeconds: 0 };
-  const control = (label) => {
-    const disabled = !readiness.ready;
-    const wait = disabled && readiness.remainingSeconds != null
-      ? `<p class="muted-note" data-recovery-wait data-remaining="${readiness.remainingSeconds}">Available in ${formatWait(readiness.remainingSeconds)}</p>`
-      : '';
-    return `<div class="actions"><button type="button" class="outline" data-action="safety" data-recovery-button ${disabled ? 'disabled' : ''}>${label}</button></div>${wait}`;
-  };
+  const control = (label) => recoveryControlHtml(recovery, label, 'safety');
   if (game.safetyAction === 'fallback_claim' && game.status === 'first_revealed') {
     return `
       <div id="game-safety" class="safety">
