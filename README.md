@@ -146,3 +146,7 @@ Runtime details:
   any other value); `KASPA_WRPC_URL` can pin a testnet-10 wRPC node.
 - Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
   `/var/lib/kaspa-even-odd` stores non-secret backend game metadata.
+
+## Support
+
+If you like this repo, you can tip me at [https://kas.coffee/danieliyahu](https://kas.coffee/danieliyahu).
