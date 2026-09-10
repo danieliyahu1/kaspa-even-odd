@@ -578,7 +578,10 @@ export class BackendGameService {
     const player = this.#matchPlayer(match, input.creatorAddress);
     const playerIndex = match.players.indexOf(player);
     const assignedSide = match.creatorSide === (playerIndex === match.creatorIndex ? 'even' : 'odd') ? 'even' : 'odd';
-    if (match.status !== 'ready' || playerIndex !== match.creatorIndex || input.stakeKas !== MATCH_STAKE_KAS || input.side !== assignedSide || player.commitment !== input.creatorCommitment) {
+    // The matchmaking vote commitment is only a "player has voted" signal and is
+    // intentionally non-durable; the on-chain game commitment is created
+    // separately. Requiring them to be equal would reject every valid start.
+    if (match.status !== 'ready' || playerIndex !== match.creatorIndex || input.stakeKas !== MATCH_STAKE_KAS || input.side !== assignedSide || !player.commitment) {
       throw new ProtocolError('MATCH_NOT_READY', 'This matchmaking game is not ready to start');
     }
   }
