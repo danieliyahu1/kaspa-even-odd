@@ -640,8 +640,9 @@ function formatWait(seconds) {
 
 // The refund/claim button state comes from the chain, not the server: the
 // server only points at the public covenant output to read. If the chain can't
-// be reached we fail open (`ready: null`) and let the covenant enforce the wait
-// on-chain, instead of wedging the button disabled forever.
+// be reached we keep the button disabled (`ready: null`) with a note and retry
+// on the next refresh; a refund/claim needs the chain anyway, and the covenant
+// still enforces the wait on-chain.
 async function readRecovery(request) {
   if (!request) return null;
   try {
@@ -653,13 +654,14 @@ async function readRecovery(request) {
 }
 
 // Tri-state readiness: `true` = available, `false` + countdown = wait, `null` =
-// unknown (fail open; the covenant still rejects a premature claim on-chain).
+// unknown (chain unreachable; keep the button disabled with a note until the
+// next refresh can confirm readiness).
 function recoveryControlState(recovery) {
   if (!recovery || recovery.ready === true) return { disabled: false, wait: null, unknown: false };
   if (recovery.ready === false && recovery.remainingSeconds != null) {
     return { disabled: true, wait: Number(recovery.remainingSeconds), unknown: false };
   }
-  return { disabled: false, wait: null, unknown: true };
+  return { disabled: true, wait: null, unknown: true };
 }
 
 function recoveryControlHtml(recovery, label, action) {
