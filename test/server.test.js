@@ -27,7 +27,7 @@ test('server serves the browser application and health probe', async (t) => {
   t.after(() => rm(directory, { recursive: true, force: true }));
 
   await waitForServer(`http://127.0.0.1:${port}/readyz`);
-  const [page, host, rival, health, missing, demoApi, appScript, secretsScript, verifyScript, coreScript, genesisScript, artifact, pins, wasmJs] = await Promise.all([
+  const [page, host, rival, health, missing, demoApi, appScript, secretsScript, verifyScript, coreScript, genesisScript, artifact, pins, wasmJs, icon] = await Promise.all([
     fetch(`http://127.0.0.1:${port}/`),
     fetch(`http://127.0.0.1:${port}/host`),
     fetch(`http://127.0.0.1:${port}/rival`),
@@ -42,6 +42,7 @@ test('server serves the browser application and health probe', async (t) => {
     fetch(`http://127.0.0.1:${port}/covenant/even_odd.template.artifact.json`),
     fetch(`http://127.0.0.1:${port}/covenant/pins.json`),
     fetch(`http://127.0.0.1:${port}/vendor/kaspa-wasm32-sdk/v2.0.1/web/kaspa/kaspa.js`),
+    fetch(`http://127.0.0.1:${port}/icon.svg`),
   ]);
 
   assert.equal(page.status, 200);
@@ -69,6 +70,8 @@ test('server serves the browser application and health probe', async (t) => {
   assert.equal(artifact.status, 200);
   assert.equal(pins.status, 200);
   assert.equal(wasmJs.status, 200);
+  assert.equal(icon.status, 200);
+  assert.match(icon.headers.get('content-type') ?? '', /image\/svg\+xml/);
   assert.equal((await artifact.json()).contracts.EvenOdd.compiled.state_span.len, 219);
   assert.match(await pins.json().then((p) => p.rustyKaspa.webVendoredWasmFileSha256), /^[0-9a-f]{64}$/);
   assert.doesNotMatch(browserSource, /api\/demo|eo-demo-player|Simulate timeout/);

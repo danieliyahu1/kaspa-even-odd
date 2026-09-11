@@ -22,7 +22,7 @@ const publicRoot = fileURLToPath(new URL('../public/', import.meta.url));
 const sourceRoot = fileURLToPath(new URL('./', import.meta.url));
 const covenantRoot = fileURLToPath(new URL('../covenant/', import.meta.url));
 const vendorRoot = fileURLToPath(new URL('../vendor/', import.meta.url));
-const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm' };
+const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8', '.json': 'application/json; charset=utf-8', '.wasm': 'application/wasm', '.svg': 'image/svg+xml; charset=utf-8' };
 
 // Defense-in-depth against XSS reading the browser-local reveal secret. Scripts
 // are same-origin only (no inline/third-party), with 'wasm-unsafe-eval' for the
@@ -192,6 +192,11 @@ async function routeRequest(req, res, pathname) {
   }
   if (req.method === 'GET' && /^\/(app|styles)\.\w+$/.test(pathname)) {
     return serveFile(publicRoot, pathname.slice(1), res);
+  }
+  // Serve the SVG favicon for both the declared icon path and the implicit
+  // browser request, so the tab icon loads instead of 404ing.
+  if (req.method === 'GET' && (pathname === '/icon.svg' || pathname === '/favicon.ico')) {
+    return serveFile(publicRoot, 'icon.svg', res);
   }
   const publicModule = pathname.match(/^\/([A-Za-z0-9_-]+\.(?:js|mjs))$/);
   if (req.method === 'GET' && publicModule) {
