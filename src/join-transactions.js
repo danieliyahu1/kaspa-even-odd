@@ -17,7 +17,7 @@ export function prepareJoinTransaction({ game, joinerPublicKey, joinerCommitment
   const input = normalizeInput({ ...gameInput, amount: pot, covenantId: gameInput.covenantId ?? game.currentCovenantId }, buildKccEntrySignatureScript({
     entry: 'join',
     args: [publicKey, commitment],
-    redeemScript: game.currentRedeemScript,
+    redeemScript: gameInput.redeemScript ?? game.currentRedeemScript,
   }));
   if (!input.utxo.covenantId) throw invalid('Current game input must carry its covenant ID');
   const ordinary = feeInputs.map((entry) => {

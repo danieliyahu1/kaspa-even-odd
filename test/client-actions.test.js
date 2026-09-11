@@ -61,6 +61,7 @@ test('client builds a join transaction with the doubled-pot continuation', () =>
   assert.equal(tx.outputs[0].value, '200000000');
   assert.equal(tx.outputs[0].covenant.covenantId, creationUtxo.covenantId);
   assert.equal(built.joinedAddress, joined.address);
+  assert.equal(tx.inputs[0].signatureScript.includes(bytesToHex(state0.redeemScript)), true, 'join input must push the current covenant redeem script');
 });
 
 test('client creation refuses a covenant that does not match the committed state', () => {
