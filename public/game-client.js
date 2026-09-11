@@ -78,7 +78,16 @@ export async function createGame({ wallet, side, number, stakeKas, rpcUrl }) {
     gameId,
     network: NETWORK,
     role: 'creator',
-    creator: { address: wallet.address, publicKey: wallet.publicKey, commitment: secret.commitment, side },
+    creator: {
+      address: wallet.address,
+      publicKey: wallet.publicKey,
+      commitment: secret.commitment,
+      side,
+      creatorPublicKey: wallet.publicKey,
+      creatorCommitment: secret.commitment,
+      stakeKas,
+      deadlineDaa: String(deadlineDaa),
+    },
     joiner: null,
     stakeKas,
     deadlineDaa: String(deadlineDaa),
@@ -121,7 +130,13 @@ export async function joinGame({ wallet, gameId, creation, number, rpcUrl }) {
     gameId,
     network: NETWORK,
     role: 'joiner',
-    creator: { ...creation, address: creation.creatorAddress ?? null },
+    creator: {
+      ...creation,
+      address: creation.creatorAddress ?? null,
+      publicKey: creation.creatorPublicKey,
+      commitment: creation.creatorCommitment,
+      deadlineDaa: String(creation.deadlineDaa),
+    },
     stakeKas: creation.stakeKas,
     deadlineDaa: String(creation.deadlineDaa),
     createdAt: new Date().toISOString(),
@@ -168,6 +183,7 @@ function relayPayload(record) {
 }
 
 async function hydrateRecord(record) {
+  if (normalizeCreatorRecord(record)) await saveGame(record);
   if (record.joiner) return record;
   try {
     const response = await fetch(`/api/relay/${record.gameId}`);
@@ -418,6 +434,35 @@ function buildRevealGameState(record, state, walletAddress) {
     refunds: record.refunds ?? {},
     noRevealRefundDeadlineDaa: state.blockDaaScore + NO_REVEAL_REFUND_DAA_OFFSET,
   };
+}
+
+// Records created before the reveal-key bug stored the creator as `{ ...invite,
+// address }`, exposing `creatorPublicKey`/`creatorCommitment` but not the
+// `publicKey`/`commitment` names the reveal and recovery paths read. Normalize
+// every loaded record to the canonical shape with BOTH key sets plus a
+// JSON-safe deadline, and report whether storage needs updating.
+function normalizeCreatorRecord(record) {
+  const creator = record?.creator;
+  if (typeof creator !== 'object' || creator === null) return false;
+  const publicKey = creator.publicKey ?? creator.creatorPublicKey;
+  const commitment = creator.commitment ?? creator.creatorCommitment;
+  let deadlineDaa = creator.deadlineDaa ?? record.deadlineDaa;
+  if (typeof deadlineDaa === 'bigint') deadlineDaa = String(deadlineDaa);
+  const normalized = {
+    address: creator.address ?? creator.creatorAddress ?? null,
+    publicKey,
+    commitment,
+    side: creator.side,
+    creatorPublicKey: publicKey,
+    creatorCommitment: commitment,
+    stakeKas: creator.stakeKas ?? record.stakeKas,
+    deadlineDaa,
+  };
+  const same = ['address', 'publicKey', 'commitment', 'side', 'creatorPublicKey', 'creatorCommitment', 'stakeKas', 'deadlineDaa']
+    .every((key) => creator[key] === normalized[key]);
+  if (same) return false;
+  record.creator = normalized;
+  return true;
 }
 
 export async function readFeerate(rpc) {
