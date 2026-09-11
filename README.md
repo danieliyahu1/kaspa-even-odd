@@ -31,11 +31,11 @@ secret, commitment preimage, wallet key, or transaction template.
   verifies the template hash, and produces the P2SH-256 script and `kaspatest:`
    address. Output is byte-for-byte cross-validated against the authoritative
    Rust `covenant-oracle` (see `oracle/`).
-- `src/chain-adapter.js` provides the production `KaspaChainAdapter`:
-  `prepareCreation` (UTXOs + live priority feerate + local mass/relay floor
-  policy via `src/fee-policy.js`), WASM `verifySignedCreation`,
-  `submitCreation` over wRPC, and `confirmCreation` gated on one DAA
-  confirmation.
+- `src/chain-adapter.js` provides the production `KaspaChainAdapter` gateway
+  between the game use cases and the chain: `prepareCreation` (UTXOs + live
+  priority feerate + local mass/relay floor policy via `src/fee-policy.js`),
+  `confirmCreation` gated on one DAA confirmation, and `prepareJoin`
+  (doubled-pot continuation with ordinary joiner fee inputs).
 - `src/terminal-actions.js` reduces confirmed game state into fallback-claim and
   individual-refund eligibility, including DAA deadlines, race precedence, and
   fail-closed user-facing outcomes.
@@ -48,12 +48,17 @@ secret, commitment preimage, wallet key, or transaction template.
 - `src/recovery.js` reconstructs game state from accepted chain history with a
   one-confirmation buffer, invalidates removed-block checkpoints, classifies
   external transactions, and provides memory and durable JSON recovery stores.
-- `src/backend-game-service.js` is the matchmaking service only: it pairs two
-  players for a rival game, assigns roles and sides, and relays the creator's
-  non-secret creation state to the joiner. The game itself is built, signed, and
-  broadcast in the browser.
-- `src/backend-game-store.js` persists matchmaking sessions on disk. The server
-  never stores game transactions or reveal material.
+- `src/backend-game-service.js` is the game use-case layer. It owns chain
+  communication end to end: it prepares create/join/reveal/refund/claim
+  transactions, verifies KasWare-signed SafeJSON, and broadcasts to the node.
+  The browser only ever sends the commitment hash until the reveal, when the
+  number becomes public on-chain anyway, so the server never learns a hidden
+  number before both commitments are confirmed. It also pairs matchmaking
+  players and attaches the creator's on-chain game to the match.
+- `src/backend-game-store.js` persists game records, matchmaking sessions, and
+  non-secret transaction preparations atomically on disk. Reveal preimages are
+  never stored here; they live only in the short-lived in-memory
+  `src/ephemeral-preparations.js`.
 - `src/wasm-transaction.js` loads the pinned WASM SDK (`Transaction`,
   `GenesisCovenantGroup`, `populateGenesisCovenants`, `serializeToSafeJSON`)
   and rejects any wallet mutation of sighash-relevant fields.
@@ -157,13 +162,10 @@ Runtime details:
   `ClusterSecretStore` contract is unused because the app has no server-side
   secret. Wallet keys never leave the browser.
 - Required network: `KASPA_NETWORK=testnet-10` (the process fails closed for
-  any other value); `KASPA_WRPC_URL` can pin the server's testnet-10 wRPC node.
-  The browser reads and broadcasts over WebSocket; `/api/config` advertises the
-  browser endpoint, which defaults to the pinned public
-  `wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh` and can be overridden
-  per deployment with `KASPA_WRPC_BROWSER_URL` (or per client with `?node=`). The
-  web SDK resolver's `https://` endpoints are not used because browsers block
-  them via CORS.
+  any other value); `KASPA_WRPC_URL` pins the server's testnet-10 wRPC node
+  (the SDK resolver is the fallback). The browser never talks to a node
+  directly; all chain reads, fee estimation, transaction preparation, and
+  broadcast happen server-side.
 - Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
   `/var/lib/kaspa-even-odd` stores non-secret backend game metadata. It is
   `ReadWriteOnce` and only ever mounted by a single replica; the Deployment uses
@@ -195,46 +197,41 @@ Observability:
 - `deploy/grafana-dashboard.yaml` provisions the "Kaspa Even/Odd" dashboard
   into the `observability` namespace via the `grafana_dashboard: "1"` label.
 
-## Trustless client
+## Trust model
 
-Every game — friend/invite and "Find a rival" — runs the same browser game
-engine and does not depend on the backend to move funds:
+The browser is a thin client and the server coordinates every game. The hidden
+number and nonce are generated in the browser and never leave it until reveal:
 
-- `src/wasm-loader.mjs` loads the pinned Rusty Kaspa v2.0.1 SDK in Node (NodeJS
-  build) or the browser (web build), verifying the WASM binary against the
-  pinned SHA-256 before use.
+- `public/secrets.js` stores each game's hidden number in IndexedDB under a
+  fresh 32-byte `crypto.getRandomValues` nonce, saved before any funds are
+  locked. Only the commitment hash is sent to the server. The secret is deleted
+  once the game settles, is claimed, or is refunded.
+- `public/verify.js` independently re-derives the covenant and checks the
+  prepared creation output before KasWare is asked to sign, so a compromised
+  server cannot substitute a different commitment, side, stake, or covenant.
+- `public/app.js` drives the flow: create → reveal → refund/claim, signing each
+  server-prepared transaction with KasWare and returning it for broadcast.
+- `src/wasm-loader.mjs` loads the pinned Rusty Kaspa v2.0.1 SDK in Node and
+  verifies the WASM binary against the pinned SHA-256 before use.
 - `src/covenant/even-odd-core.mjs` is the isomorphic, `Buffer`-free covenant
   derivation; `src/covenant/template.mjs` supplies the pinned artifact.
-- `src/client-actions.mjs` builds create/join/reveal/refund/claim transactions
-  locally; `src/wrpc.mjs` is the isomorphic wRPC client used to read UTXOs/DAA
-  and broadcast.
-- `public/game-client.js` orchestrates build → sign (KasWare) → broadcast,
-  persists non-secret game metadata in IndexedDB, and re-verifies any relayed
-  opponent data on-chain before use.
-- `public/secrets.js` stores each game's hidden number in IndexedDB using a
-  fresh 32-byte `crypto.getRandomValues` nonce (saved before funds are locked).
-  The secret is deleted once the game settles, is claimed, or is refunded.
 - The server sends a strict `Content-Security-Policy` (same-origin scripts,
-  `wasm-unsafe-eval`, no objects/frames) as defense-in-depth against XSS reading
-  the browser-local reveal secret.
-- `public/verify.js` independently re-derives the covenant and checks the
-  prepared creation output before KasWare is asked to sign.
+  `wasm-unsafe-eval`, `connect-src 'self'`, no objects/frames) as
+  defense-in-depth against XSS reading the browser-local reveal secret.
 
-The friend invite URL (`/join?v=…&game=…&pk=…&c=…&s=…&k=…&d=…&a=…`) carries the
-full non-secret creation state so a joiner can rebuild the covenant without the
-server. A rival game works the same way, except the server introduces the two
-players and relays the creator's creation state through the matchmaking session.
-An optional untrusted relay (`POST/GET /api/relay/:gameId`) lets the creator
-discover the join; every relayed payload is re-derived and checked against the
-on-chain covenant before it is trusted. If the relay or backend is unavailable,
-the on-chain DAA timeouts still let players reveal, claim, or refund from a
-compatible client.
+The commit-reveal covenant enforces the result on-chain. The server sees only
+the commitment hash at create/join time. It learns the number and nonce only
+when it prepares the reveal transaction — after both commitments are confirmed
+on-chain and the number is public by design — so a server that also plays as a
+player cannot change its committed number after seeing an opponent's.
 
-The server has a single responsibility: helping strangers find each other. It
-pairs players, assigns sides, and relays the non-secret creation state. Once the
-two players are matched, the game is identical to the friend flow and keeps
-working even if the server goes down. The server never sees a reveal secret and
-never builds or broadcasts a transaction.
+The friend invite URL (`/join?v=…&game=<gameId>`) carries only the protocol
+version and confirmed game identifier; the server holds the rest of the public
+creation state. A rival game works the same way, except the server introduces
+the two players and attaches the creator's on-chain game to the matchmaking
+session. The server builds and broadcasts every transaction, so it is required
+for the normal flow; the covenant still enforces the reveal/claim/refund
+timeouts on-chain regardless of who broadcasts.
 
 ## Support
 

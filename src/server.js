@@ -5,7 +5,8 @@ import { fileURLToPath } from 'node:url';
 import { BackendGameService } from './backend-game-service.js';
 import { BackendGameStore } from './backend-game-store.js';
 import { NETWORK, PROTOCOL_VERSION, ProtocolError } from './protocol.js';
-import { Metrics } from './metrics.js';
+import { WrpcClient } from './wrpc-client.js';
+import { Metrics, withRpcMetrics } from './metrics.js';
 import { RelayStore } from './relay-store.js';
 import { RateLimiter } from './rate-limit.js';
 import { logger } from './logger.js';
@@ -25,8 +26,8 @@ const contentTypes = { '.css': 'text/css; charset=utf-8', '.html': 'text/html; c
 
 // Defense-in-depth against XSS reading the browser-local reveal secret. Scripts
 // are same-origin only (no inline/third-party), with 'wasm-unsafe-eval' for the
-// pinned Rusty Kaspa SDK. connect-src stays broad because the trustless client
-// talks to a user-selectable / resolver-provided wRPC node.
+// pinned Rusty Kaspa SDK. The thin browser client talks only to this server
+// (connect-src 'self'); all Kaspa chain communication happens server-side.
 const contentSecurityPolicy = [
   "default-src 'self'",
   "script-src 'self' 'wasm-unsafe-eval'",
@@ -35,7 +36,7 @@ const contentSecurityPolicy = [
   "style-src 'self'",
   "img-src 'self' data:",
   "font-src 'self'",
-  "connect-src 'self' https: wss: ws:",
+  "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'none'",
   "form-action 'self'",
@@ -50,17 +51,22 @@ if (!Number.isInteger(rateLimitPerMinute) || rateLimitPerMinute < 1) throw new E
 
 const metrics = new Metrics();
 metrics.setProductInfo(PROTOCOL_VERSION);
+const chainClient = new WrpcClient({ network: configuredNetwork });
+const rpc = withRpcMetrics(chainClient, metrics);
 const store = new BackendGameStore(process.env.GAME_STORE_PATH ?? '.data/games.json', { metrics });
-const gameService = new BackendGameService({ store, metrics });
+const gameService = new BackendGameService({ rpc, store, metrics });
 
 // Optional, untrusted relay: clients publish non-secret game state here so the
 // opponent can discover it. Every payload is re-verified on-chain by the
-// receiving client, so the relay cannot alter the game. It is not required for
-// settlement and can be replaced by any other relay.
+// receiving client, so the relay cannot alter the game.
 const relay = new RelayStore();
 const mutatingLimiter = new RateLimiter({ limit: rateLimitPerMinute, windowMs: 60_000 });
 
 await store.init();
+
+// Warm the node connection in the background so the first real chain call is
+// not the slow one. Never block startup or fail it on a cold node.
+void chainClient.connect().catch((error) => logger.debug('rpc_warmup_failed', { message: error?.message }));
 
 const server = createServer((req, res) => {
   const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
@@ -117,21 +123,49 @@ async function routeRequest(req, res, pathname) {
   if (req.method === 'GET' && pathname === '/api/config') {
     return sendJson(res, 200, await gameService.networkStatus());
   }
+  if (req.method === 'POST' && pathname === '/api/games/prepare') {
+    return sendJson(res, 200, await gameService.prepareCreation(await readJson(req)));
+  }
+  if (req.method === 'POST' && pathname === '/api/games/submit') {
+    return sendJson(res, 202, await gameService.submitCreation(await readJson(req)));
+  }
   if (req.method === 'POST' && pathname === '/api/matchmaking/join') {
     return sendJson(res, 200, await gameService.joinMatchmaking(await readJson(req)));
   }
   const matchStatus = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})$/i);
-  const matchWrite = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})\/(creation|leave)$/i);
+  const matchLeave = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})\/leave$/i);
   if (req.method === 'GET' && matchStatus) {
     const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
     return sendJson(res, 200, await gameService.matchmakingStatus(matchStatus[1], query.get('address')));
   }
-  if (req.method === 'POST' && matchWrite?.[2] === 'creation') {
-    return sendJson(res, 200, await gameService.publishCreation(matchWrite[1], await readJson(req)));
-  }
-  if (req.method === 'POST' && matchWrite?.[2] === 'leave') {
+  if (req.method === 'POST' && matchLeave) {
     const body = await readJson(req);
-    return sendJson(res, 200, await gameService.leaveMatchmaking(matchWrite[1], body.address));
+    return sendJson(res, 200, await gameService.leaveMatchmaking(matchLeave[1], body.address));
+  }
+  const gameMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})$/i);
+  const joinMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})\/join\/(prepare|submit)$/i);
+  const revealMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})\/reveal\/(prepare|submit)$/i);
+  const actionMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})\/(creator_refund|fallback_claim|refund_player)\/(prepare|submit)$/i);
+  if (req.method === 'POST' && joinMatch?.[2] === 'prepare') {
+    return sendJson(res, 200, await gameService.prepareJoin(joinMatch[1], await readJson(req)));
+  }
+  if (req.method === 'POST' && joinMatch?.[2] === 'submit') {
+    return sendJson(res, 202, await gameService.submitJoin(joinMatch[1], await readJson(req)));
+  }
+  if (req.method === 'POST' && revealMatch?.[2] === 'prepare') {
+    return sendJson(res, 200, await gameService.prepareReveal(revealMatch[1], await readJson(req)));
+  }
+  if (req.method === 'POST' && revealMatch?.[2] === 'submit') {
+    return sendJson(res, 202, await gameService.submitReveal(revealMatch[1], await readJson(req)));
+  }
+  if (req.method === 'POST' && actionMatch?.[3] === 'prepare') {
+    return sendJson(res, 200, await gameService.prepareSafetyAction(actionMatch[1], actionMatch[2], await readJson(req)));
+  }
+  if (req.method === 'POST' && actionMatch?.[3] === 'submit') {
+    return sendJson(res, 202, await gameService.submitSafetyAction(actionMatch[1], actionMatch[2], await readJson(req)));
+  }
+  if (req.method === 'GET' && gameMatch) {
+    return sendJson(res, 200, await gameService.readGame(gameMatch[1]));
   }
 
   const relayMatch = pathname.match(/^\/api\/relay\/([0-9a-f]{64})$/i);
@@ -243,9 +277,14 @@ function routeLabel(pathname) {
   if (pathname === '/healthz') return '/healthz';
   if (pathname === '/readyz') return '/readyz';
   if (pathname === '/api/config') return '/api/config';
+  if (pathname === '/api/games/prepare') return '/api/games/prepare';
+  if (pathname === '/api/games/submit') return '/api/games/submit';
   if (pathname === '/api/matchmaking/join') return '/api/matchmaking/join';
-  if (/^\/api\/matchmaking\/[0-9a-f-]{36}\/(creation|leave)$/i.test(pathname)) return '/api/matchmaking/:id/:action';
+  if (/^\/api\/matchmaking\/[0-9a-f-]{36}\/leave$/i.test(pathname)) return '/api/matchmaking/:id/leave';
   if (/^\/api\/matchmaking\/[0-9a-f-]{36}$/i.test(pathname)) return '/api/matchmaking/:id';
+  if (/^\/api\/games\/[0-9a-f]{64}\/(join|reveal)\/(prepare|submit)$/i.test(pathname)) return '/api/games/:id/:stage/:step';
+  if (/^\/api\/games\/[0-9a-f]{64}\/(creator_refund|fallback_claim|refund_player)\/(prepare|submit)$/i.test(pathname)) return '/api/games/:id/:action/:step';
+  if (/^\/api\/games\/[0-9a-f]{64}$/i.test(pathname)) return '/api/games/:id';
   if (/^\/api\/relay\/[0-9a-f]{64}$/i.test(pathname)) return '/api/relay/:id';
   if (pathname === '/' || pathname === '/host' || pathname === '/rival' || pathname === '/join' || pathname === '/game') return 'page';
   if (/^\/(app|styles)\.\w+$/.test(pathname)) return 'asset';
@@ -301,7 +340,8 @@ logger.info('server_started', {
 
 function shutdown(signal) {
   logger.info('server_stopping', { signal });
-  server.close(() => {
+  server.close(async () => {
+    try { await rpc.disconnect(); } catch (disconnectError) { logger.error('rpc_disconnect_failed', { message: disconnectError?.message, stack: disconnectError?.stack }); }
     metricsServer.close(() => { logger.info('server_stopped'); process.exit(0); });
   });
   setTimeout(() => process.exit(1), 10_000).unref();

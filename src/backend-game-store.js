@@ -6,8 +6,10 @@ import { noopMetrics } from './metrics.js';
 
 const MATCH_WAIT_TIMEOUT_MS = 30_000;
 
-// Durable storage for matchmaking sessions only. The game itself lives on-chain
-// and in the players' browsers; the server never persists game transactions.
+// Durable persistence for the backend game engine. Matchmaking sessions, game
+// records, and non-secret transaction preparations are written atomically to a
+// single JSON file. Reveal preimages are intentionally never stored here; they
+// live only in the ephemeral in-memory store.
 export class BackendGameStore {
   constructor(filePath, { metrics = noopMetrics } = {}) {
     if (!filePath) throw new ProtocolError('STORAGE_UNAVAILABLE', 'Backend game store path is required');
@@ -28,16 +30,48 @@ export class BackendGameStore {
     });
   }
 
+  async loadPrepared(preparedHash) {
+    return clone((await this.#read()).prepared[preparedHash] ?? null);
+  }
+
+  async savePrepared(record) {
+    await this.#update((data) => { data.prepared[record.preparedHash] = record; });
+  }
+
+  async loadGame(gameId) {
+    return clone((await this.#read()).games[gameId] ?? null);
+  }
+
+  async saveGame(record) {
+    await this.#update((data) => { data.games[record.gameId] = record; });
+  }
+
+  async loadJoinPrepared(preparedHash) {
+    return clone((await this.#read()).joinPrepared[preparedHash] ?? null);
+  }
+
+  async saveJoinPrepared(record) {
+    await this.#update((data) => { data.joinPrepared[record.preparedHash] = record; });
+  }
+
+  async loadActionPrepared(preparedHash) {
+    return clone((await this.#read()).actionPrepared[preparedHash] ?? null);
+  }
+
+  async saveActionPrepared(record) {
+    await this.#update((data) => { data.actionPrepared[record.preparedHash] = record; });
+  }
+
   async joinMatchmaking(player) {
     return this.#updateWithResult((data) => {
       const now = Date.now();
       for (const match of Object.values(data.matches)) {
-        if (!['waiting', 'matched'].includes(match.status)) continue;
+        if (!['waiting', 'matched', 'ready'].includes(match.status)) continue;
         const lastSeen = Math.min(...match.players.map((player) => Date.parse(player.lastSeenAt ?? player.joinedAt ?? '')));
         if (!Number.isFinite(lastSeen) || now - lastSeen > MATCH_WAIT_TIMEOUT_MS) match.status = 'cancelled';
       }
       data.queue = data.queue.filter((matchId) => data.matches[matchId]?.status === 'waiting');
-      const active = Object.values(data.matches).find((match) => ['waiting', 'matched'].includes(match.status)
+      const active = Object.values(data.matches).find((match) => ['waiting', 'matched', 'ready'].includes(match.status)
         && match.players.some((item) => item.address === player.address));
       if (active) {
         active.status = 'cancelled';
@@ -94,7 +128,7 @@ export class BackendGameStore {
       const match = data.matches[matchId];
       if (!match) return;
       match.players = match.players.filter((player) => player.address !== address);
-      if (['waiting', 'matched'].includes(match.status)) {
+      if (['waiting', 'matched', 'ready'].includes(match.status)) {
         match.status = 'cancelled';
         data.queue = data.queue.filter((id) => id !== matchId);
       }
@@ -154,6 +188,10 @@ export class BackendGameStore {
 
 function normalizeData(value) {
   return {
+    prepared: value.prepared ?? {},
+    games: value.games ?? {},
+    joinPrepared: value.joinPrepared ?? {},
+    actionPrepared: value.actionPrepared ?? {},
     queue: value.queue ?? [],
     matches: value.matches ?? {},
   };

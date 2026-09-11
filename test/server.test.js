@@ -27,7 +27,7 @@ test('server serves the browser application and health probe', async (t) => {
   t.after(() => rm(directory, { recursive: true, force: true }));
 
   await waitForServer(`http://127.0.0.1:${port}/readyz`);
-  const [page, host, rival, health, missing, demoApi, appScript, gameClientScript, secretsScript, verifyScript, coreScript, genesisScript, artifact, pins, wasmJs, icon] = await Promise.all([
+  const [page, host, rival, health, missing, demoApi, appScript, secretsScript, verifyScript, coreScript, genesisScript, artifact, pins, wasmJs, icon] = await Promise.all([
     fetch(`http://127.0.0.1:${port}/`),
     fetch(`http://127.0.0.1:${port}/host`),
     fetch(`http://127.0.0.1:${port}/rival`),
@@ -35,7 +35,6 @@ test('server serves the browser application and health probe', async (t) => {
     fetch(`http://127.0.0.1:${port}/public-game-list`),
     fetch(`http://127.0.0.1:${port}/api/demo/games`),
     fetch(`http://127.0.0.1:${port}/app.js`),
-    fetch(`http://127.0.0.1:${port}/game-client.js`),
     fetch(`http://127.0.0.1:${port}/secrets.js`),
     fetch(`http://127.0.0.1:${port}/verify.js`),
     fetch(`http://127.0.0.1:${port}/src/covenant/even-odd-core.mjs`),
@@ -61,10 +60,10 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(csp, /script-src 'self' 'wasm-unsafe-eval'/);
   assert.match(csp, /object-src 'none'/);
   assert.match(csp, /frame-ancestors 'none'/);
-  assert.match(csp, /connect-src 'self' https: wss: ws:/);
+  assert.match(csp, /connect-src 'self'/);
+  assert.doesNotMatch(csp, /wss:|ws:/);
   assert.equal(page.headers.get('x-frame-options'), 'DENY');
   const browserSource = await appScript.text();
-  const gameClientSource = await gameClientScript.text();
   const secretsSource = await secretsScript.text();
   assert.equal(verifyScript.status, 200);
   assert.equal(coreScript.status, 200);
@@ -76,67 +75,49 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(icon.headers.get('content-type') ?? '', /image\/svg\+xml/);
   assert.equal((await artifact.json()).contracts.EvenOdd.compiled.state_span.len, 219);
   assert.match(await pins.json().then((p) => p.rustyKaspa.webVendoredWasmFileSha256), /^[0-9a-f]{64}$/);
+
+  // The thin client talks only to this server; it never constructs or verifies
+  // chain transactions itself beyond checking the prepared creation.
   assert.doesNotMatch(browserSource, /api\/demo|eo-demo-player|Simulate timeout/);
-  assert.match(browserSource, /api\/matchmaking\/\$\{match\.matchId\}\/creation/);
-  assert.doesNotMatch(browserSource, /one DAA confirmation/i);
-  assert.match(browserSource, /data-action="client-reveal"/);
-  assert.match(browserSource, /Join for /);
-  assert.doesNotMatch(browserSource, /data-reveal-number/);
-  assert.doesNotMatch(browserSource, /FIXED_NONCE|fill\(1\)/);
-  assert.match(gameClientSource, /loadSecretForGame/);
-  assert.match(gameClientSource, /bindSecretToGame/);
-  assert.doesNotMatch(browserSource, /showNotice\('#game-action'/);
+  assert.match(browserSource, /api\/games\/prepare/);
+  assert.match(browserSource, /api\/games\/submit/);
+  assert.match(browserSource, /api\/games\/\$\{gameId\}\/join\/prepare/);
+  assert.match(browserSource, /api\/games\/\$\{gameId\}\/reveal\/prepare/);
+  assert.match(browserSource, /api\/matchmaking\/join/);
+  assert.match(browserSource, /api\/matchmaking\/\$\{match\.matchId\}\/leave/);
+  assert.match(browserSource, /data-action="reveal"/);
   assert.match(browserSource, /data-commit-number/);
   assert.match(browserSource, /data-join-number/);
-  assert.match(gameClientSource, /createRevealSecret\(number\)/);
-  assert.doesNotMatch(browserSource, /createRevealSecret\(yourSide/);
-  assert.match(browserSource, /Even \/ Odd|Even\/Odd/);
-  assert.doesNotMatch(browserSource, /Guess even/i);
-  assert.match(browserSource, /renderClientJoin\(/);
+  assert.match(browserSource, /createRevealSecret\(number\)/);
+  assert.match(browserSource, /verifyCreation\(/);
+  assert.match(browserSource, /loadSecretForGame/);
+  assert.match(browserSource, /bindSecretToGame/);
+  assert.match(browserSource, /deleteSecretForGame/);
+  assert.match(browserSource, /signPskt/);
   assert.match(browserSource, /Find a rival/);
-  assert.match(browserSource, /api\/matchmaking\/join/);
-  assert.match(browserSource, /createGame\(\{ wallet/);
   assert.match(browserSource, /Play with a friend/);
   assert.match(browserSource, /location\.pathname === '\/host'/);
-  assert.doesNotMatch(browserSource, /renderJoin\(|Joining unavailable/);
-  assert.doesNotMatch(browserSource, /data-action="create"/);
-  assert.match(browserSource, /Claim or refund/);
-  assert.doesNotMatch(browserSource, /Refund unmatched game/);
-  assert.doesNotMatch(browserSource, /UTXO|commitment preimage|Player A side|\bPrepare with backend\b|\bCommit vote\b/i);
+  assert.match(browserSource, /Even \/ Odd|Even\/Odd/);
+  assert.doesNotMatch(browserSource, /DEFAULT_WRPC_URL|WrpcClient|readRecoveryReadiness|game-client|client-actions/);
+  assert.doesNotMatch(browserSource, /data-reveal-number|FIXED_NONCE|fill\(1\)|transientCommitment/);
+  assert.doesNotMatch(browserSource, /Guess even|Joining unavailable|data-action="create"/);
+
   assert.match(secretsSource, /getRandomValues/);
   assert.match(secretsSource, /indexedDB/);
-  assert.doesNotMatch(secretsSource, /fill\(1\)|FIXED_NONCE/);
-  assert.match(browserSource, /joinGame\(\{ wallet/);
-  assert.match(browserSource, /connectKasware/);
-  assert.match(browserSource, /signPskt/);
-  assert.match(browserSource, /deleteSecretForGame/);
-  assert.match(browserSource, /forgetRevealSecret/);
   assert.match(secretsSource, /deleteSecretForGame/);
-  assert.match(browserSource, /readRecoveryReadiness/);
-  assert.match(browserSource, /data-recovery-wait/);
-  assert.match(browserSource, /DEFAULT_WRPC_URL/);
-  assert.match(browserSource, /recoveryControlState/);
-  assert.match(browserSource, /initWalletButton/);
-  assert.match(browserSource, /renderWalletButton/);
-  assert.doesNotMatch(browserSource, /kastle/i);
-
-  const wrpcSource = await (await fetch(`http://127.0.0.1:${port}/src/wrpc.mjs`)).text();
-  assert.match(wrpcSource, /DEFAULT_WRPC_URL = 'wss:\/\/vector-10\.kaspa\.green\/kaspa\/testnet-10\/wrpc\/borsh'/);
+  assert.doesNotMatch(secretsSource, /fill\(1\)|FIXED_NONCE|transientCommitment/);
 
   const modulePaths = [
-    '/game-client.js',
-    '/src/client-actions.mjs',
-    '/src/wrpc.mjs',
-    '/src/wasm-loader.mjs',
-    '/src/funding.mjs',
-    '/src/covenant/template.mjs',
+    '/app.js',
+    '/secrets.js',
+    '/verify.js',
+    '/kasware-signing.js',
+    '/log.js',
     '/src/covenant/even-odd-core.mjs',
-    '/src/terminal-transactions.js',
-    '/src/join-transactions.js',
-    '/src/reveal.js',
-    '/src/wasm-transaction.js',
-    '/src/fee-policy.js',
-    '/src/kasware-wallet.js',
+    '/src/covenant/template.mjs',
+    '/src/genesis-transaction.js',
+    '/src/protocol.js',
+    '/src/transaction-diagnostics.js',
     '/src/hashes/blake2b.mjs',
     '/src/hashes/blake3.mjs',
     '/src/hashes/bech32.mjs',
@@ -148,9 +129,11 @@ test('server serves the browser application and health probe', async (t) => {
     assert.match(response.headers.get('content-type') ?? '', /javascript/);
   }
 
+  // The browser module graph (client + static source) must be fully reachable
+  // without the deleted client-side transaction engine.
   const origin = `http://127.0.0.1:${port}`;
   const seen = new Set();
-  const queue = ['/app.js', '/secrets.js', '/verify.js', '/game-client.js'];
+  const queue = ['/app.js', '/secrets.js', '/verify.js'];
   while (queue.length) {
     const modulePath = queue.shift();
     if (seen.has(modulePath)) continue;
@@ -169,7 +152,8 @@ test('server serves the browser application and health probe', async (t) => {
       queue.push(new URL(specifier, new URL(modulePath, origin)).pathname);
     }
   }
-  assert.ok(seen.size >= 20, 'the browser module graph should include all client modules');
+  assert.ok(seen.size >= 10, 'the browser module graph should include all client modules');
+  assert.ok(!seen.has('/game-client.js'), 'the deleted client engine must not be reachable');
 
   const relayId = 'ab'.repeat(32);
   const relayPayload = { gameId: relayId, joiner: { publicKey: '08'.repeat(32) }, joinedAddress: 'kaspatest:x' };

@@ -1,18 +1,10 @@
-// Isomorphic Kaspa wRPC client for the pinned v2.0.1 SDK.
-//
-// Works in Node (via the NodeJS SDK build) and in the browser (via the web
-// build over WebSocket). The backend keeps using this class; the browser uses
-// it to read UTXOs/DAA and broadcast directly to a user-selectable node, so
-// settlement does not depend on the app server.
+// Kaspa wRPC client for the pinned v2.0.1 SDK, used by the backend to read the
+// chain and broadcast transactions. The browser never talks to the node
+// directly; all chain communication is server-side.
 import { NETWORK, ProtocolError } from './protocol.js';
 import { loadWasmSdk, initWasmSdk } from './wasm-loader.mjs';
 
 const DEFAULT_NODE_URL = typeof process !== 'undefined' ? process?.env?.KASPA_WRPC_URL : undefined;
-
-// Browser-safe public testnet-10 wRPC WebSocket endpoint. The web SDK resolver
-// returns `https://` (HTTP) endpoints that browsers block via CORS; a `wss://`
-// URL uses the WebSocket transport, which is not CORS-gated.
-export const DEFAULT_WRPC_URL = 'wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh';
 
 export class WrpcClient {
   constructor({ network = NETWORK, url = DEFAULT_NODE_URL } = {}) {

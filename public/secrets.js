@@ -50,12 +50,6 @@ export function commitmentFor(choice, nonce) {
   return bytesToHex(blake2b256(revealPreimage(choice, nonce)));
 }
 
-// A commitment that is not persisted: used for matchmaking vote signalling
-// where the on-chain game commitment is created separately and durably.
-export function transientCommitment(choice) {
-  return commitmentFor(choice, randomNonce());
-}
-
 function openDb() {
   return new Promise((resolve, reject) => {
     if (!globalThis.indexedDB) return reject(new Error('IndexedDB is unavailable in this browser'));
