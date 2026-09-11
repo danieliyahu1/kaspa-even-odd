@@ -102,6 +102,12 @@ test('server serves the browser application and health probe', async (t) => {
   assert.doesNotMatch(browserSource, /data-reveal-number|FIXED_NONCE|fill\(1\)|transientCommitment/);
   assert.doesNotMatch(browserSource, /Guess even|Joining unavailable|data-action="create"/);
 
+  // Regression: the repaint-dedup signature must not track the countdown, or
+  // every tick rebuilds the join form and clears the joiner's number selection.
+  const gameSignatureFn = browserSource.match(/function gameSignature\(game\)\s*\{([\s\S]*?)\n\}/);
+  assert.ok(gameSignatureFn, 'gameSignature should be defined');
+  assert.doesNotMatch(gameSignatureFn[1], /return \[[^\]]*safetyRemainingSeconds/);
+
   assert.match(secretsSource, /getRandomValues/);
   assert.match(secretsSource, /indexedDB/);
   assert.match(secretsSource, /deleteSecretForGame/);

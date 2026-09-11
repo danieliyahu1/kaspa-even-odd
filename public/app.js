@@ -841,7 +841,12 @@ async function refreshGame(gameId) {
 }
 
 function gameSignature(game) {
-  return [game.status, game.safetyAction, game.safetyReady, game.safetyRemainingSeconds, game.firstRevealer, game.winner].join('|');
+  // `safetyRemainingSeconds` is intentionally excluded: it decrements every
+  // second, and re-painting on each tick would rebuild the in-progress forms
+  // (wiping the joiner's number selection). The countdown note updates itself
+  // locally via `bindRecoveryCountdown`, and the flip of `safetyReady` is the
+  // authoritative signal that forces a re-paint.
+  return [game.status, game.safetyAction, game.safetyReady, game.firstRevealer, game.winner].join('|');
 }
 
 async function connectKasware(selector) {
