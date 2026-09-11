@@ -146,14 +146,6 @@ docker build --platform linux/arm64 -t ghcr.io/danieliyahu1/kaspa-even-odd/kaspa
 image line is updated by CI, never by hand. Deleting a file under `deploy/`
 removes the corresponding object from the cluster (Argo prunes it).
 
-The optional `scripts/manual-smoke.mjs` live test signs and broadcasts a real
-testnet-10 transaction. It commits no wallet material; supply a throwaway
-testnet wallet through the environment:
-
-```sh
-EO_CREATOR_ADDRESS=... EO_CREATOR_PUBLIC_KEY=... EO_CREATOR_PRIVATE_KEY=... node scripts/manual-smoke.mjs --dry-run
-```
-
 Runtime details:
 
 - Namespace: `kaspa-even-odd`

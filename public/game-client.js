@@ -312,18 +312,18 @@ async function readCovenantState(rpc, record) {
   let descriptor = stateDescriptor(record);
   let found = await findUtxo(rpc, descriptor);
   if (!found && record.joiner && !record.firstRevealer) {
-    // The opponent may have revealed first. Discover the continuation from the
-    // optional relay, then verify it on-chain by deriving the covenant locally.
-    const discovery = await discoverFirstReveal(record);
+    // The opponent may have revealed first, spending the joined output into a
+    // continuation covenant. Discover it from the chain (no server): derive the
+    // candidate continuations and keep the one that currently holds the pot.
+    const discovery = await discoverFirstReveal(rpc, record);
     if (discovery) {
-      const continuation = deriveContinuation(record, discovery.firstRole);
       record.reveals = { ...(record.reveals ?? {}), [discovery.firstRole]: { choice: discovery.choice, status: 'confirmed' } };
       record.firstRevealer = discovery.firstRole;
-      record.continuationAddress = continuation.address;
-      record.continuationScriptPublicKey = `0000${bytesToHex(continuation.p2shScript)}`;
-      record.continuationRedeemScript = bytesToHex(continuation.redeemScript);
+      record.continuationAddress = discovery.continuation.address;
+      record.continuationScriptPublicKey = `0000${bytesToHex(discovery.continuation.p2shScript)}`;
+      record.continuationRedeemScript = bytesToHex(discovery.continuation.redeemScript);
       await saveGame(record);
-      descriptor = { address: continuation.address, outputIndex: 0, redeemScript: bytesToHex(continuation.redeemScript) };
+      descriptor = { address: discovery.continuation.address, outputIndex: 0, redeemScript: bytesToHex(discovery.continuation.redeemScript) };
       found = await findUtxo(rpc, descriptor);
     }
   }
@@ -373,7 +373,7 @@ function stateDescriptor(record) {
   return { address: record.joinedAddress, outputIndex: 0, redeemScript: record.joinedRedeemScript };
 }
 
-function deriveContinuation(record, firstRole) {
+function deriveContinuation(record, firstRole, choice) {
   const firstPublicKey = record[firstRole].publicKey;
   return deriveGameInstance({
     creatorPubkey: record.creator.publicKey,
@@ -383,26 +383,30 @@ function deriveContinuation(record, firstRole) {
     potSompi: stakeToSompi(record.stakeKas) * 2n,
     deadlineDaa: BigInt(record.deadlineDaa),
     creatorEven: record.creator.side === 'even',
-    creatorChoice: firstRole === 'creator' ? record.reveals.creator.choice : 0,
-    joinerChoice: firstRole === 'joiner' ? record.reveals.joiner.choice : 0,
+    creatorChoice: firstRole === 'creator' ? choice : 0,
+    joinerChoice: firstRole === 'joiner' ? choice : 0,
     firstRevealerHash: bytesToHex(blake2b256(hexToBytes(firstPublicKey))),
     status: 2,
   }, { template: getCovenantTemplate() });
 }
 
-async function discoverFirstReveal(record) {
-  try {
-    const response = await fetch(`/api/games/${record.gameId}`);
-    if (!response.ok) return null;
-    const game = await response.json();
-    if (game.status !== 'first_revealed' || !game.revealedPicks) return null;
-    const firstRole = game.firstRevealer === record.creator?.address ? 'creator' : 'joiner';
-    const choice = game.revealedPicks[firstRole];
-    if (choice !== 0 && choice !== 1) return null;
-    return { firstRole, choice };
-  } catch {
-    return null;
+// The opponent's first reveal spends the joined covenant into a continuation
+// covenant whose address depends on the first revealer and their hidden choice.
+// With no server to ask, derive each candidate and keep the one that currently
+// holds the pot on-chain.
+async function discoverFirstReveal(rpc, record) {
+  const potSompi = stakeToSompi(record.stakeKas) * 2n;
+  for (const firstRole of ['creator', 'joiner']) {
+    if (!record[firstRole]?.publicKey) continue;
+    for (const choice of [0, 1]) {
+      const continuation = deriveContinuation(record, firstRole, choice);
+      const entries = (await rpc.getUtxosByAddresses([continuation.address])).entries;
+      if (entries.some((entry) => BigInt(entry.amount ?? entry.utxo?.amount ?? 0) === potSompi)) {
+        return { firstRole, choice, continuation };
+      }
+    }
   }
+  return null;
 }
 
 function buildRevealGameState(record, state, walletAddress) {
