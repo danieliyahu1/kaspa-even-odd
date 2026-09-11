@@ -129,7 +129,7 @@ export function buildRevealTx({ gameId, game, caller, currentDaaScore, secret, g
     joinerChoice: caller === game.joinerAddress ? decision.choice : game.joinerChoice,
     creatorEven: game.creatorEven,
   });
-  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi) + 1n, changeScriptPublicKey });
+  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi), changeScriptPublicKey });
   const recipient = winner
     ? (winner === 'creator' ? game.participants[game.creatorAddress].scriptPublicKey : game.participants[game.joinerAddress].scriptPublicKey)
     : `${SCRIPT_VERSION_HEX}${bytesToHex(continuation.p2shScript)}`;
@@ -157,7 +157,7 @@ export function buildRevealTx({ gameId, game, caller, currentDaaScore, secret, g
 export function buildFallbackClaimTx({ gameId, game, caller, currentDaaScore, gameInput, feeInputs, feeSompi, changeScriptPublicKey }) {
   const decision = resolveFallbackClaim({ game, caller, currentDaaScore });
   if (!decision.available) throw new ProtocolError('ACTION_UNAVAILABLE', decision.message);
-  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi) + 1n, changeScriptPublicKey });
+  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi), changeScriptPublicKey });
   const prepared = prepareFallbackClaimTransaction({
     game,
     caller,
@@ -176,7 +176,7 @@ export function buildRefundTx({ gameId, game, caller, currentDaaScore, gameInput
   const decision = resolveIndividualRefund({ game, caller, currentDaaScore });
   if (!decision.available) throw new ProtocolError('ACTION_UNAVAILABLE', decision.message);
   const requiresContinuation = !Object.values(game.refunds ?? {}).some(Boolean);
-  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi) + 1n, changeScriptPublicKey });
+  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi), changeScriptPublicKey });
   const prepared = prepareIndividualRefundTransaction({
     game,
     caller,
@@ -196,7 +196,7 @@ export function buildRefundTx({ gameId, game, caller, currentDaaScore, gameInput
 export function buildCreatorRefundTx({ network = NETWORK, gameId, creation, gameInput, feeInputs, feeSompi, changeScriptPublicKey }) {
   const covenant = deriveCreationCovenant({ ...creation });
   const potSompi = stakeToSompi(creation.stakeKas);
-  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi) + 1n, changeScriptPublicKey });
+  const change = selectChange({ entries: feeInputs, targetSompi: BigInt(feeSompi), changeScriptPublicKey });
   const prepared = prepareTerminalTransaction({
     action: 'refund',
     gameInput: { ...gameInput, amount: potSompi, redeemScript: bytesToHex(covenant.redeemScript) },
