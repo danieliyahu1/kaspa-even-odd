@@ -395,7 +395,7 @@ async function paintGame(gameId, game) {
         ${gameDetails(game)}
         ${active ? (joinerView ? joinSection(game, yourSide ?? (game.creator?.side === 'even' ? 'odd' : 'even')) : '') + inviteBox(game, waiting) + (revealMine ? revealSection(game) : '') : ''}
         ${resultOverlay(game, role)}
-        ${safetySection(game)}
+        ${safetySection(game, role)}
         ${terminalSection(game)}
       </div>
     </section>`;
@@ -590,9 +590,11 @@ function flashCopy(button) {
   setTimeout(() => { button.textContent = original; }, 1600);
 }
 
-function safetySection(game) {
+function safetySection(game, role) {
   const control = (label) => recoveryControlHtml(recoveryFromGame(game), label, 'safety');
+  const isParticipant = role === 'creator' || role === 'joiner';
   if (game.safetyAction === 'fallback_claim' && game.status === 'first_revealed') {
+    if (connectedAddress() !== game.firstRevealer) return '';
     return `
       <div id="game-safety" class="safety">
         <p class="lead">If your ${game.matchmaking ? 'rival' : 'friend'} never reveals</p>
@@ -601,12 +603,14 @@ function safetySection(game) {
       </div>`;
   }
   if (game.safetyAction === 'creator_refund' && game.status === 'waiting_for_player_b') {
+    if (role !== 'creator') return '';
     return `
       <div id="game-safety" class="safety">
         ${control('Cancel game')}
       </div>`;
   }
   if (game.safetyAction === 'refund_player' && (game.status === 'joined' || game.status === 'refund_partial')) {
+    if (!isParticipant) return '';
     return `
       <div id="game-safety" class="safety">
         <p class="lead">No one revealed</p>

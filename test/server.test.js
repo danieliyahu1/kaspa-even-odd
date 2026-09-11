@@ -108,6 +108,14 @@ test('server serves the browser application and health probe', async (t) => {
   assert.ok(gameSignatureFn, 'gameSignature should be defined');
   assert.doesNotMatch(gameSignatureFn[1], /return \[[^\]]*safetyRemainingSeconds/);
 
+  // Regression: safety actions are role-scoped. Viewers and non-participants
+  // must never be shown creator-only, first-revealer-only, or player-only
+  // recovery controls.
+  assert.match(browserSource, /function safetySection\(game, role\)/);
+  assert.match(browserSource, /const isParticipant = role === 'creator' \|\| role === 'joiner'/);
+  assert.match(browserSource, /if \(role !== 'creator'\) return ''/);
+  assert.match(browserSource, /connectedAddress\(\) !== game\.firstRevealer/);
+
   assert.match(secretsSource, /getRandomValues/);
   assert.match(secretsSource, /indexedDB/);
   assert.match(secretsSource, /deleteSecretForGame/);
