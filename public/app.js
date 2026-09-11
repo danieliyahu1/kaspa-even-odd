@@ -1,4 +1,4 @@
-import { bindSecretToGame, createRevealSecret, deleteSecretForGame, loadSecretForGame } from '/secrets.js';
+import { deleteSecretForGame } from '/secrets.js';
 import { createGame, joinGame, reveal as clientReveal, refundOrClaim, loadHydratedGame, readRecoveryReadiness } from '/game-client.js';
 import { DEFAULT_WRPC_URL } from '/src/wrpc.mjs';
 import { logDebug, logInfo, logWarn, logError } from '/log.js';
@@ -301,125 +301,22 @@ function renderCreate() {
   });
 }
 
-async function waitForGameConfirmation(gameId, stakeKas) {
-  const confirmBox = document.querySelector('#confirm-box');
-  const box = confirmBox ?? document.createElement('div');
-  box.id = 'confirm-box';
-  box.className = 'confirm-banner';
-  box.innerHTML = `
-    <div class="header-loading"><span class="spinner large confirm" aria-hidden="true"></span><span class="confirm-title">Locking it in &mdash; confirming your ${escapeHtml(stakeKas)} KAS stake</span></div>`;
-  if (!confirmBox) {
-    const form = document.querySelector('#create-form');
-    form.prepend(box);
-  }
-   const createSubmit = document.querySelector('#create-submit');
-   if (createSubmit) createSubmit.disabled = true;
-  try {
-    while (true) {
-      const status = await api(`/api/games/${gameId}`);
-      if (status.status === 'waiting_for_player_b') {
-        location.href = `/game?id=${gameId}`;
-        return;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 2500));
-    }
-  } catch (error) {
-    box.remove();
-    renderBackendError(error.message);
-  }
-}
-
-function joinSection(game, yourSide) {
-  if (!game.canJoin) return '';
-  const theirStake = game.stakeKas;
-  return `
-    <div class="hero-card" id="join-card">
-      <p class="lead">You're <strong class="side-strong">${capitalize(yourSide)}</strong>.</p>
-      <form class="form" id="join-form">
-        <fieldset class="choice-group">
-          <legend>Your number</legend>
-          <div class="choice-row">
-            <button type="button" class="choice num" data-join-number="1" aria-pressed="false"><span class="num-big">1</span><small class="num-tag">Odd</small></button>
-            <button type="button" class="choice num" data-join-number="0" aria-pressed="false"><span class="num-big">2</span><small class="num-tag">Even</small></button>
-          </div>
-        </fieldset>
-        <p class="fate">Stake ${escapeHtml(theirStake)} KAS. Winner takes ${escapeHtml(theirStake * 2)} KAS.</p>
-        <div id="join-notice"></div>
-        <p class="muted-note">Your number is saved only in this browser. Clearing site data before you reveal forfeits your stake.</p>
-        <div class="actions">
-          <button type="submit" class="primary" id="join-submit" disabled>Join for ${escapeHtml(theirStake)} KAS</button>
-        </div>
-      </form>
-    </div>`;
-}
-
-async function bindJoin(gameId, game) {
-  const form = document.querySelector('#join-form');
-  if (!form) return;
-  const theirStake = game.stakeKas;
-  const submit = form.querySelector('button[type="submit"]');
-  let number = null;
-  document.querySelectorAll('[data-join-number]').forEach((button) => {
-    button.addEventListener('click', () => {
-      number = Number(button.dataset.joinNumber);
-      document.querySelectorAll('[data-join-number]').forEach((item) => {
-        const selected = item === button;
-        item.classList.toggle('selected', selected);
-        item.setAttribute('aria-pressed', String(selected));
-      });
-      submit.disabled = false;
-    });
-  });
-  form.addEventListener('submit', async (event) => {
-    event.preventDefault();
-    if (number === null) return showNotice('#join-notice', 'Pick a number', 'Choose 1 or 2 before you join.', 'error');
-    submit.disabled = true;
-    try {
-      const { provider, account } = await connectKasware('#join-notice');
-      rememberAddress(account.address);
-      const secret = await createRevealSecret(number);
-      await bindSecretToGame(gameId, secret.secretId);
-      const prepared = await api(`/api/games/${gameId}/join/prepare`, { method: 'POST', body: {
-        joinerAddress: account.address,
-        joinerPublicKey: account.publicKey,
-        joinerCommitment: secret.commitment,
-      } });
-      showNotice('#join-notice', 'Confirm in KasWare', `Match ${theirStake} KAS. Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
-      const signedTxJson = await signWithKasware(provider, prepared.txJson);
-      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
-      await api(`/api/games/${gameId}/join/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
-      await refreshGame(gameId);
-    } catch (error) {
-      submit.disabled = false;
-      logError('join_game_failed', { code: error.code, message: error.message });
-      showNotice('#join-notice', error.message, '', 'error');
-    }
-  });
-}
-
 async function renderGame(gameId) {
   if (!isGameId(gameId)) return renderBackendError('That game link doesn\u2019t look right.');
   const local = await loadHydratedGame(gameId).catch(() => null);
   if (local) return renderClientGame(gameId, local);
-  scheduleGameRefresh(gameId);
-  try {
-    const game = await api(`/api/games/${gameId}`);
-    const recovery = await readRecovery(game.safetyAction
-      ? { action: game.safetyAction, deadlineDaa: game.deadlineDaa, output: game.safetyOutput } : null);
-    paintGame(gameId, game, recovery);
-  } catch (error) {
-    renderBackendError(error.message);
-  }
+  renderBackendError('This game is not saved in this browser. Reopen the invite link, or use the browser that created it.');
 }
 
 async function renderJoinEntry(gameId) {
   if (!isGameId(gameId)) return renderBackendError('That game link doesn\u2019t look right.');
-  const creation = creationFromParams();
   const local = await loadHydratedGame(gameId).catch(() => null);
   if (local) return renderClientGame(gameId, local);
+  const creation = creationFromParams();
   if (creation) return renderClientJoin(gameId, creation);
-  return renderGame(gameId);
+  renderBackendError('This invite is missing the game details needed to join.');
 }
+
 
 function creationFromParams() {
   const pk = params.get('pk');
@@ -704,87 +601,6 @@ function preferredRpcUrl() {
   catch { return serverWrpcUrl || DEFAULT_WRPC_URL; }
 }
 
-function paintGameHeader(status, role, game) {
-  if (status === 'settled') {
-    const won = winnerIsYou(game, role);
-    return { title: won ? 'You won.' : game.winner === 'creator' ? `${capitalize(game.creator?.side)} took it.` : 'Game over.', loading: false };
-  }
-  if (role === 'creator' && game.status === 'waiting_for_player_b') return { title: 'Your game is ready.', loading: false };
-  if (game.status === 'joined' || game.status === 'first_revealed' || game.status === 'reveal_broadcast' || game.status === 'settlement_broadcast') return { title: "It's on.", loading: false };
-  if (game.canJoin) return { title: "You're in.", loading: false };
-  return { title: 'Locking it in.', loading: true };
-}
-
-async function paintGame(gameId, game, recovery) {
-  const role = detectRole(game);
-  const yourSide = role === 'creator' ? game.creator?.side : role === 'joiner' ? (game.creator?.side === 'even' ? 'odd' : 'even') : null;
-  const header = paintGameHeader(game.status, role, game);
-  const joinerView = role === 'joiner' || (role === 'viewer' && game.canJoin);
-  const active = !['settled', 'fallback_claimed', 'refunded', 'creator_refunded'].includes(game.status);
-  void forgetRevealSecret(gameId, !active);
-  const revealMine = game.canReveal && (role === 'creator' || role === 'joiner') && !isMyReveal(game, role);
-  const waiting = active && !joinerView && !revealMine;
-
-  app.innerHTML = `
-    <a class="back" href="/">Exit</a>
-    <section class="panel" aria-label="Game">
-      <div class="panel-head">
-        ${header.loading ? '<div class="header-loading"><span class="spinner large confirm" aria-hidden="true"></span><h2>Locking it in</h2></div>' : `<h2>${header.title}</h2>`}
-      </div>
-      <div class="game-body">
-        ${gameDetails(game)}
-        ${active ? (joinerView ? joinSection(game, yourSide ?? (game.creator?.side === 'even' ? 'odd' : 'even')) : '') + inviteBox(game, waiting) + (revealMine ? revealSection(game, role) : '') : ''}
-        ${resultOverlay(game, role)}
-        ${safetySection(game, recovery)}
-        ${terminalSection(game)}
-      </div>
-    </section>`;
-
-  await bindJoin(gameId, game);
-  bindReveal(gameId);
-  bindShare();
-  bindSafety(gameId, game);
-  bindRecoveryCountdown(recovery, () => refreshGame(gameId));
-  bindPlayAgain();
-}
-
-function inviteBox(game, waiting) {
-  if (['settled', 'fallback_claimed', 'refunded', 'creator_refunded'].includes(game.status)) return '';
-  const waitingRow = waiting
-    ? `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Waiting for your ${game.matchmaking ? 'rival' : 'friend'}</span></div>`
-    : '';
-  if (game.matchmaking) return `<div class="invite-box" id="invite-box">${waitingRow}</div>`;
-  return `
-    <div class="invite-box" id="invite-box">
-      ${waitingRow}
-      <button class="share-button" data-action="copy-link">Copy link</button>
-    </div>`;
-}
-
-function gameDetails(game) {
-  const amount = game.stakeKas;
-  const pot = game.stakeKas * 2;
-  return `
-    <div class="summary">
-      <div class="sum-item"><small>Stake</small><strong>${escapeHtml(amount)} KAS</strong></div>
-      <div class="sum-item"><small>Pot</small><strong>${escapeHtml(pot)} KAS</strong></div>
-    </div>`;
-}
-
-function revealSection(game, role) {
-  return `
-    <div id="game-action" class="reveal-block">
-      <p class="lead">Reveal your number</p>
-      <div id="reveal-notice"></div>
-      <div class="actions"><button type="button" class="primary" data-action="reveal">Reveal number</button></div>
-    </div>`;
-}
-
-function isMyReveal(game, role) {
-  if (role !== 'creator' && role !== 'joiner') return false;
-  return game.revealedPicks?.[role] !== undefined;
-}
-
 // Once the game is over the reveal nonce is public on-chain, so drop the local
 // copy rather than keep a stale secret in IndexedDB indefinitely.
 async function forgetRevealSecret(gameId, terminal) {
@@ -797,172 +613,10 @@ async function forgetRevealSecret(gameId, terminal) {
   }
 }
 
-function bindReveal(gameId) {
-  const reveal = document.querySelector('[data-action="reveal"]');
-  if (!reveal) return;
-  reveal.addEventListener('click', async () => {
-    reveal.disabled = true;
-    try {
-      const { provider, account } = await connectKasware('#reveal-notice');
-      rememberAddress(account.address);
-      const secret = await loadSecretForGame(gameId);
-      if (!secret) {
-        showNotice('#reveal-notice', 'Reveal unavailable', 'This browser does not have your unrevealed number for this game. Play the game in the browser you used to start it, and keep this site\'s data.', 'error');
-        reveal.disabled = false;
-        return;
-      }
-      const prepared = await api(`/api/games/${gameId}/reveal/prepare`, { method: 'POST', body: {
-        playerAddress: account.address,
-        playerPublicKey: account.publicKey,
-        choice: secret.choice,
-        nonceHex: secret.nonceHex,
-      } });
-      showNotice('#reveal-notice', 'Confirm in KasWare', `Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
-      const signedTxJson = await signWithKasware(provider, prepared.txJson);
-      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
-      await api(`/api/games/${gameId}/reveal/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
-      await refreshGame(gameId);
-    } catch (error) {
-      reveal.disabled = false;
-      logError('reveal_failed', { code: error.code, message: error.message });
-      if (error.code === 'INVALID_REVEAL') {
-        showNotice('#reveal-notice', 'Reveal did not match', 'The saved number no longer matches the locked commitment. You may have started this game in another browser.', 'error');
-      } else {
-        showNotice('#reveal-notice', error.message, '', 'error');
-      }
-    }
-  });
-}
-
-function bindShare() {
-  const url = location.href;
-  const copy = document.querySelector('[data-action="copy-link"]');
-  if (copy) {
-    copy.addEventListener('click', async () => {
-      try {
-        await copyLink(url);
-        flashCopy(copy);
-      } catch { /* ignore */ }
-    });
-  }
-}
-
-async function copyLink(url) {
-  await navigator.clipboard.writeText(url);
-}
-
 function flashCopy(button) {
   const original = button.textContent;
   button.textContent = 'Copied';
   setTimeout(() => { button.textContent = original; }, 1600);
-}
-
-function safetySection(game, recovery) {
-  const control = (label) => recoveryControlHtml(recovery, label, 'safety');
-  if (game.safetyAction === 'fallback_claim' && game.status === 'first_revealed') {
-    return `
-      <div id="game-safety" class="safety">
-        <p class="lead">If your ${game.matchmaking ? 'rival' : 'friend'} never reveals</p>
-        <p class="muted-note">You can claim the whole pot after the wait.</p>
-        ${control('Claim pot')}
-      </div>`;
-  }
-  if (game.safetyAction === 'creator_refund' && game.status === 'waiting_for_player_b') {
-    return `
-      <div id="game-safety" class="safety">
-        ${control('Cancel game')}
-      </div>`;
-  }
-  if (game.safetyAction === 'refund_player' && (game.status === 'joined' || game.status === 'refund_partial')) {
-    return `
-      <div id="game-safety" class="safety">
-        <p class="lead">No one revealed</p>
-        <p class="muted-note">You can take back your stake after the wait.</p>
-        ${control('Refund my stake')}
-      </div>`;
-  }
-  return '';
-}
-
-function terminalSection(game) {
-  if (game.status === 'fallback_claimed') return `<div class="notice"><strong>Pot claimed.</strong>Your ${game.matchmaking ? 'rival' : 'friend'} never revealed, so you took the pot.</div>`;
-  if (game.status === 'refunded' || game.status === 'creator_refunded') return '<div class="notice"><strong>Canceled.</strong>Your stake was returned.</div>';
-  if (game.status === 'refund_partial') return '<div class="notice"><strong>Partial refund.</strong>One stake was returned. The other player can still refund theirs.</div>';
-  return '';
-}
-
-function bindSafety(gameId, game) {
-  const safetyButton = document.querySelector('[data-action="safety"]');
-  if (!safetyButton || safetyButton.disabled) return;
-  safetyButton.addEventListener('click', async () => {
-    safetyButton.disabled = true;
-    try {
-      const { provider, account } = await connectKasware('#game-safety');
-      const prepared = await api(`/api/games/${gameId}/${game.safetyAction}/prepare`, { method: 'POST', body: {
-        playerAddress: account.address,
-        playerPublicKey: account.publicKey,
-      } });
-      showNotice('#game-safety', 'Confirm in KasWare', `Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
-      const signedTxJson = await signWithKasware(provider, prepared.txJson);
-      if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
-      await api(`/api/games/${gameId}/${game.safetyAction}/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
-      await refreshGame(gameId);
-    } catch (error) {
-      safetyButton.disabled = false;
-      logError('safety_action_failed', { code: error.code, message: error.message });
-      showNotice('#game-safety', error.message, '', 'error');
-    }
-  });
-}
-
-function winnerIsYou(game, role) {
-  if (role !== 'creator' && role !== 'joiner') return false;
-  return game.winner === role;
-}
-
-function resultOverlay(game, role) {
-  if (game.status !== 'settled') return '';
-  const won = winnerIsYou(game, role);
-  const creatorEven = game.creator?.side === 'even';
-  const creatorPick = displayPick(game.revealedPicks?.creator);
-  const joinerPick = displayPick(game.revealedPicks?.joiner);
-  const resultTitle = role === 'creator' || role === 'joiner'
-    ? `${won ? 'You won ' : 'You lost '}<strong>${escapeHtml(game.stakeKas * 2)} KAS</strong>.`
-    : `<strong>${capitalize(winnerSideName(game))}</strong> took the pot.`;
-  return `
-    <div class="result ${won ? 'winner' : 'loser'}">
-      <p class="result-title">${resultTitle}</p>
-      <div class="result-side">
-        <span class="result-side-name">Creator &middot; ${capitalize(game.creator?.side)}</span>
-        <span class="result-pick">${creatorPick}</span>
-      </div>
-      <div class="result-side">
-        <span class="result-side-name">Joiner &middot; ${capitalize(game.creator?.side === 'even' ? 'odd' : 'even')}</span>
-        <span class="result-pick">${joinerPick}</span>
-      </div>
-      ${role === 'creator' || role === 'joiner' ? '<button type="button" class="primary" data-action="play-again">Play again</button>' : ''}
-    </div>`;
-}
-
-function displayPick(choice) {
-  if (choice === undefined) return '\u00b7';
-  return choice === 1 ? 1 : 2;
-}
-
-function winnerSideName(game) {
-  return game.winner === 'creator' ? (game.creator?.side === 'even' ? 'Even' : 'Odd') : (game.creator?.side === 'even' ? 'Odd' : 'Even');
-}
-
-function bindPlayAgain() {
-  const again = document.querySelector('[data-action="play-again"]');
-  if (again) again.addEventListener('click', () => { location.href = '/'; });
-}
-
-function detectRole(game) {
-  const address = connectedAddress();
-  if (address && game.creator?.address === address) return 'creator';
-  if (address && game.joiner?.address === address) return 'joiner';
-  return 'viewer';
 }
 
 function rememberAddress(address) {
@@ -1027,30 +681,6 @@ function shortAddress(address) {
 }
 
 function capitalize(word) { return word ? word.charAt(0).toUpperCase() + word.slice(1) : ''; }
-
-function scheduleGameRefresh(gameId) {
-  if (!window.__gameRefreshStarted) {
-    window.__gameRefreshStarted = true;
-    setInterval(() => { void refreshGame(gameId); }, 3500);
-  }
-  window.__gameStatus = undefined;
-}
-
-async function refreshGame(gameId) {
-  try {
-    if (!(location.pathname === '/game' || location.pathname === '/join')) return;
-    if ((params.get('id') ?? params.get('game')) !== gameId) return;
-    const game = await api(`/api/games/${gameId}`);
-    const recovery = await readRecovery(game.safetyAction
-      ? { action: game.safetyAction, deadlineDaa: game.deadlineDaa, output: game.safetyOutput } : null);
-    const signature = `${game.status}|${recovery ? recovery.ready : ''}`;
-    if (window.__gameStatus === signature) return;
-    window.__gameStatus = signature;
-    await paintGame(gameId, game, recovery);
-  } catch {
-    // A transient refresh may race a broadcast; the next tick retries.
-  }
-}
 
 async function connectKasware(selector) {
   const provider = globalThis.kasware;
@@ -1147,5 +777,4 @@ function showNotice(selector, title, message, kind) {
 }
 
 function isGameId(value) { return /^[0-9a-f]{64}$/i.test(value ?? ''); }
-function formatKas(sompi) { return (Number(sompi) / 100_000_000).toFixed(8).replace(/0+$/, '').replace(/\.$/, ''); }
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[character]); }

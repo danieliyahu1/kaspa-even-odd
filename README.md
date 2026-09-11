@@ -48,11 +48,12 @@ secret, commitment preimage, wallet key, or transaction template.
 - `src/recovery.js` reconstructs game state from accepted chain history with a
   one-confirmation buffer, invalidates removed-block checkpoints, classifies
   external transactions, and provides memory and durable JSON recovery stores.
-- `src/backend-game-service.js` exposes the browser boundary for live creation:
-  it derives deadlines from testnet-10 DAA state, prepares from live UTXOs and
-  fees, verifies KasWare SafeJSON, submits over wRPC, and checks confirmation.
-- `src/backend-game-store.js` persists non-secret preparation and game metadata
-  on disk. The browser does not create identities or simulate game state.
+- `src/backend-game-service.js` is the matchmaking service only: it pairs two
+  players for a rival game, assigns roles and sides, and relays the creator's
+  non-secret creation state to the joiner. The game itself is built, signed, and
+  broadcast in the browser.
+- `src/backend-game-store.js` persists matchmaking sessions on disk. The server
+  never stores game transactions or reveal material.
 - `src/wasm-transaction.js` loads the pinned WASM SDK (`Transaction`,
   `GenesisCovenantGroup`, `populateGenesisCovenants`, `serializeToSafeJSON`)
   and rejects any wallet mutation of sighash-relevant fields.
@@ -179,8 +180,7 @@ Runtime details:
   and `RATE_LIMIT_PER_MINUTE` (default 300) caps mutating API calls per client.
   Set `TRUST_PROXY=true` only behind a trusted proxy that rewrites
   `x-forwarded-for`. The in-memory relay expires entries after 10 minutes and
-  caps payloads and entry count; reveal preparations are held in memory with a
-  TTL instead of being written to the PVC.
+  caps payloads and entry count; the server holds no reveal secret.
 - Logging: `LOG_LEVEL` (default `info`; `debug` adds static-asset requests) and
   `LOG_FORMAT` (`text` or `json`). Each request logs its method, route template,
   status, duration, and any protocol error code/message. Logs never contain
@@ -205,8 +205,8 @@ Observability:
 
 ## Trustless client
 
-The friend/invite flow runs entirely in the browser and does not depend on the
-backend to move funds:
+Every game — friend/invite and "Find a rival" — runs the same browser game
+engine and does not depend on the backend to move funds:
 
 - `src/wasm-loader.mjs` loads the pinned Rusty Kaspa v2.0.1 SDK in Node (NodeJS
   build) or the browser (web build), verifying the WASM binary against the
@@ -228,16 +228,21 @@ backend to move funds:
 - `public/verify.js` independently re-derives the covenant and checks the
   prepared creation output before KasWare is asked to sign.
 
-The invite URL (`/join?v=…&game=…&pk=…&c=…&s=…&k=…&d=…&a=…`) carries the full
-non-secret creation state so a joiner can rebuild the covenant without the
-server. An optional untrusted relay (`POST/GET /api/relay/:gameId`) lets the
-opponent discover the join; every relayed payload is re-derived and checked
-against the on-chain covenant before it is trusted. If the relay or backend is
-unavailable, the on-chain DAA timeouts still let players reveal, claim, or
-refund from a compatible client.
+The friend invite URL (`/join?v=…&game=…&pk=…&c=…&s=…&k=…&d=…&a=…`) carries the
+full non-secret creation state so a joiner can rebuild the covenant without the
+server. A rival game works the same way, except the server introduces the two
+players and relays the creator's creation state through the matchmaking session.
+An optional untrusted relay (`POST/GET /api/relay/:gameId`) lets the creator
+discover the join; every relayed payload is re-derived and checked against the
+on-chain covenant before it is trusted. If the relay or backend is unavailable,
+the on-chain DAA timeouts still let players reveal, claim, or refund from a
+compatible client.
 
-The "Find a rival" matchmaking flow is still server-mediated (pairing is a
-server concern); the game itself remains enforced by the covenant.
+The server has a single responsibility: helping strangers find each other. It
+pairs players, assigns sides, and relays the non-secret creation state. Once the
+two players are matched, the game is identical to the friend flow and keeps
+working even if the server goes down. The server never sees a reveal secret and
+never builds or broadcasts a transaction.
 
 ## Support
 

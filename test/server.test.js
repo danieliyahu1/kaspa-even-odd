@@ -27,7 +27,7 @@ test('server serves the browser application and health probe', async (t) => {
   t.after(() => rm(directory, { recursive: true, force: true }));
 
   await waitForServer(`http://127.0.0.1:${port}/readyz`);
-  const [page, host, rival, health, missing, demoApi, appScript, secretsScript, verifyScript, coreScript, genesisScript, artifact, pins, wasmJs, icon] = await Promise.all([
+  const [page, host, rival, health, missing, demoApi, appScript, gameClientScript, secretsScript, verifyScript, coreScript, genesisScript, artifact, pins, wasmJs, icon] = await Promise.all([
     fetch(`http://127.0.0.1:${port}/`),
     fetch(`http://127.0.0.1:${port}/host`),
     fetch(`http://127.0.0.1:${port}/rival`),
@@ -35,6 +35,7 @@ test('server serves the browser application and health probe', async (t) => {
     fetch(`http://127.0.0.1:${port}/public-game-list`),
     fetch(`http://127.0.0.1:${port}/api/demo/games`),
     fetch(`http://127.0.0.1:${port}/app.js`),
+    fetch(`http://127.0.0.1:${port}/game-client.js`),
     fetch(`http://127.0.0.1:${port}/secrets.js`),
     fetch(`http://127.0.0.1:${port}/verify.js`),
     fetch(`http://127.0.0.1:${port}/src/covenant/even-odd-core.mjs`),
@@ -63,6 +64,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(csp, /connect-src 'self' https: wss: ws:/);
   assert.equal(page.headers.get('x-frame-options'), 'DENY');
   const browserSource = await appScript.text();
+  const gameClientSource = await gameClientScript.text();
   const secretsSource = await secretsScript.text();
   assert.equal(verifyScript.status, 200);
   assert.equal(coreScript.status, 200);
@@ -77,22 +79,20 @@ test('server serves the browser application and health probe', async (t) => {
   assert.doesNotMatch(browserSource, /api\/demo|eo-demo-player|Simulate timeout/);
   assert.match(browserSource, /api\/matchmaking\/\$\{match\.matchId\}\/creation/);
   assert.doesNotMatch(browserSource, /one DAA confirmation/i);
-  assert.match(browserSource, /Claim pot/);
+  assert.match(browserSource, /data-action="client-reveal"/);
   assert.match(browserSource, /Join for /);
   assert.doesNotMatch(browserSource, /data-reveal-number/);
   assert.doesNotMatch(browserSource, /FIXED_NONCE|fill\(1\)/);
-  assert.match(browserSource, /loadSecretForGame/);
-  assert.match(browserSource, /bindSecretToGame/);
-  assert.match(browserSource, /INVALID_REVEAL/);
-  assert.match(browserSource, /reveal-notice/);
+  assert.match(gameClientSource, /loadSecretForGame/);
+  assert.match(gameClientSource, /bindSecretToGame/);
   assert.doesNotMatch(browserSource, /showNotice\('#game-action'/);
   assert.match(browserSource, /data-commit-number/);
   assert.match(browserSource, /data-join-number/);
-  assert.match(browserSource, /createRevealSecret\(number\)/);
+  assert.match(gameClientSource, /createRevealSecret\(number\)/);
   assert.doesNotMatch(browserSource, /createRevealSecret\(yourSide/);
   assert.match(browserSource, /Even \/ Odd|Even\/Odd/);
   assert.doesNotMatch(browserSource, /Guess even/i);
-  assert.match(browserSource, /joinSection\(/);
+  assert.match(browserSource, /renderClientJoin\(/);
   assert.match(browserSource, /Find a rival/);
   assert.match(browserSource, /api\/matchmaking\/join/);
   assert.match(browserSource, /createGame\(\{ wallet/);
@@ -100,7 +100,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /location\.pathname === '\/host'/);
   assert.doesNotMatch(browserSource, /renderJoin\(|Joining unavailable/);
   assert.doesNotMatch(browserSource, /data-action="create"/);
-  assert.match(browserSource, /Refund my stake/);
+  assert.match(browserSource, /Claim or refund/);
   assert.doesNotMatch(browserSource, /Refund unmatched game/);
   assert.doesNotMatch(browserSource, /UTXO|commitment preimage|Player A side|\bPrepare with backend\b|\bCommit vote\b/i);
   assert.match(secretsSource, /getRandomValues/);
@@ -113,7 +113,6 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /forgetRevealSecret/);
   assert.match(secretsSource, /deleteSecretForGame/);
   assert.match(browserSource, /readRecoveryReadiness/);
-  assert.match(browserSource, /safetyOutput/);
   assert.match(browserSource, /data-recovery-wait/);
   assert.match(browserSource, /DEFAULT_WRPC_URL/);
   assert.match(browserSource, /recoveryControlState/);
@@ -214,7 +213,7 @@ test('server serves the browser application and health probe', async (t) => {
   // Mutating API calls are rate limited per client.
   const statuses = [];
   for (let attempt = 0; attempt < 12; attempt += 1) {
-    const response = await fetch(`${origin}/api/games/submit`, {
+    const response = await fetch(`${origin}/api/matchmaking/join`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({}),
@@ -229,7 +228,7 @@ test('server serves the browser application and health probe', async (t) => {
   }
   assert.match(stderr, /server_started/);
   assert.match(stderr, /http_request/);
-  assert.match(stderr, /route="\/api\/games\/submit"/);
+  assert.match(stderr, /route="\/api\/matchmaking\/join"/);
   assert.doesNotMatch(stderr, /kaspatest:|[0-9a-f]{64}/);
 });
 

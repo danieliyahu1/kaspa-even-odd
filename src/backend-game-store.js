@@ -6,6 +6,8 @@ import { noopMetrics } from './metrics.js';
 
 const MATCH_WAIT_TIMEOUT_MS = 30_000;
 
+// Durable storage for matchmaking sessions only. The game itself lives on-chain
+// and in the players' browsers; the server never persists game transactions.
 export class BackendGameStore {
   constructor(filePath, { metrics = noopMetrics } = {}) {
     if (!filePath) throw new ProtocolError('STORAGE_UNAVAILABLE', 'Backend game store path is required');
@@ -24,22 +26,6 @@ export class BackendGameStore {
       await this.#readRaw();
       return true;
     });
-  }
-
-  async loadPrepared(preparedHash) {
-    return clone((await this.#read()).prepared[preparedHash] ?? null);
-  }
-
-  async savePrepared(record) {
-    await this.#update((data) => { data.prepared[record.preparedHash] = record; });
-  }
-
-  async loadGame(gameId) {
-    return clone((await this.#read()).games[gameId] ?? null);
-  }
-
-  async saveGame(record) {
-    await this.#update((data) => { data.games[record.gameId] = record; });
   }
 
   async joinMatchmaking(player) {
@@ -115,22 +101,6 @@ export class BackendGameStore {
     });
   }
 
-  async loadJoinPrepared(preparedHash) {
-    return clone((await this.#read()).joinPrepared[preparedHash] ?? null);
-  }
-
-  async saveJoinPrepared(record) {
-    await this.#update((data) => { data.joinPrepared[record.preparedHash] = record; });
-  }
-
-  async loadActionPrepared(preparedHash) {
-    return clone((await this.#read()).actionPrepared[preparedHash] ?? null);
-  }
-
-  async saveActionPrepared(record) {
-    await this.#update((data) => { data.actionPrepared[record.preparedHash] = record; });
-  }
-
   async countWaitingMatches() {
     const data = await this.#read();
     return Object.values(data.matches).filter((match) => match?.status === 'waiting').length;
@@ -184,10 +154,6 @@ export class BackendGameStore {
 
 function normalizeData(value) {
   return {
-    prepared: value.prepared ?? {},
-    games: value.games ?? {},
-    joinPrepared: value.joinPrepared ?? {},
-    actionPrepared: value.actionPrepared ?? {},
     queue: value.queue ?? [],
     matches: value.matches ?? {},
   };
