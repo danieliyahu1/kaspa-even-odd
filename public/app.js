@@ -673,8 +673,9 @@ function recoveryControlHtml(recovery, label, action) {
 }
 
 function clientRole(record) {
-  return record.creator?.address === window.__connectedAddress ? 'creator'
-    : record.joiner?.address === window.__connectedAddress ? 'joiner' : 'viewer';
+  const address = connectedAddress();
+  return record.creator?.address === address ? 'creator'
+    : record.joiner?.address === address ? 'joiner' : 'viewer';
 }
 
 function clientRecovery(record, role) {
