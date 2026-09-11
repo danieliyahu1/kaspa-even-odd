@@ -102,8 +102,17 @@ export function normalizeUtxoEntry(entry) {
     scriptPublicKey: encodeScriptPublicKey(value.scriptPublicKey),
     blockDaaScore: value.blockDaaScore,
     isCoinbase: value.isCoinbase,
-    covenantId: value.covenantId,
+    covenantId: encodeCovenantId(value.covenantId),
   };
+}
+
+// The WASM UTXO entry exposes its covenant id as a `Hash` object with a hex
+// `toString()` and no `toJSON()`, so it would serialize to `{}` (a map) inside
+// a SafeJSON transaction. Normalize it to the hex string the SafeJSON expects.
+function encodeCovenantId(value) {
+  if (value === undefined || value === null) return value;
+  if (typeof value === 'string') return value;
+  return value.toString();
 }
 
 function encodeScriptPublicKey(value) {
