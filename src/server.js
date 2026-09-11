@@ -134,17 +134,17 @@ async function routeRequest(req, res, pathname) {
     return sendJson(res, 200, await gameService.joinMatchmaking(await readJson(req)));
   }
   const matchStatus = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})$/i);
-  const matchAction = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})\/(commit|leave)$/i);
+  const matchWrite = pathname.match(/^\/api\/matchmaking\/([0-9a-f-]{36})\/(creation|leave)$/i);
   if (req.method === 'GET' && matchStatus) {
     const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
     return sendJson(res, 200, await gameService.matchmakingStatus(matchStatus[1], query.get('address')));
   }
-  if (req.method === 'POST' && matchAction?.[2] === 'commit') {
-    return sendJson(res, 200, await gameService.submitMatchVote(matchAction[1], await readJson(req)));
+  if (req.method === 'POST' && matchWrite?.[2] === 'creation') {
+    return sendJson(res, 200, await gameService.publishCreation(matchWrite[1], await readJson(req)));
   }
-  if (req.method === 'POST' && matchAction?.[2] === 'leave') {
+  if (req.method === 'POST' && matchWrite?.[2] === 'leave') {
     const body = await readJson(req);
-    return sendJson(res, 200, await gameService.leaveMatchmaking(matchAction[1], body.address));
+    return sendJson(res, 200, await gameService.leaveMatchmaking(matchWrite[1], body.address));
   }
   const gameMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})$/i);
   const joinMatch = pathname.match(/^\/api\/games\/([0-9a-f]{64})\/join\/(prepare|submit)$/i);
@@ -284,7 +284,7 @@ function routeLabel(pathname) {
   if (pathname === '/api/games/prepare') return '/api/games/prepare';
   if (pathname === '/api/games/submit') return '/api/games/submit';
   if (pathname === '/api/matchmaking/join') return '/api/matchmaking/join';
-  if (/^\/api\/matchmaking\/[0-9a-f-]{36}\/(commit|leave)$/i.test(pathname)) return '/api/matchmaking/:id/:action';
+  if (/^\/api\/matchmaking\/[0-9a-f-]{36}\/(creation|leave)$/i.test(pathname)) return '/api/matchmaking/:id/:action';
   if (/^\/api\/matchmaking\/[0-9a-f-]{36}$/i.test(pathname)) return '/api/matchmaking/:id';
   if (/^\/api\/games\/[0-9a-f]{64}\/(join|reveal)\/(prepare|submit)$/i.test(pathname)) return '/api/games/:id/:stage/:step';
   if (/^\/api\/games\/[0-9a-f]{64}\/(creator_refund|fallback_claim|refund_player)\/(prepare|submit)$/i.test(pathname)) return '/api/games/:id/:action/:step';

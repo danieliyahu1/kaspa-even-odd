@@ -75,7 +75,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.equal((await artifact.json()).contracts.EvenOdd.compiled.state_span.len, 219);
   assert.match(await pins.json().then((p) => p.rustyKaspa.webVendoredWasmFileSha256), /^[0-9a-f]{64}$/);
   assert.doesNotMatch(browserSource, /api\/demo|eo-demo-player|Simulate timeout/);
-  assert.match(browserSource, /api\/games\/prepare/);
+  assert.match(browserSource, /api\/matchmaking\/\$\{match\.matchId\}\/creation/);
   assert.doesNotMatch(browserSource, /one DAA confirmation/i);
   assert.match(browserSource, /Claim pot/);
   assert.match(browserSource, /Join for /);
@@ -95,7 +95,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /joinSection\(/);
   assert.match(browserSource, /Find a rival/);
   assert.match(browserSource, /api\/matchmaking\/join/);
-  assert.match(browserSource, /stakeKas: 1/);
+  assert.match(browserSource, /createGame\(\{ wallet/);
   assert.match(browserSource, /Play with a friend/);
   assert.match(browserSource, /location\.pathname === '\/host'/);
   assert.doesNotMatch(browserSource, /renderJoin\(|Joining unavailable/);
@@ -106,7 +106,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(secretsSource, /getRandomValues/);
   assert.match(secretsSource, /indexedDB/);
   assert.doesNotMatch(secretsSource, /fill\(1\)|FIXED_NONCE/);
-  assert.match(browserSource, /verifyCreation\(/);
+  assert.match(browserSource, /joinGame\(\{ wallet/);
   assert.match(browserSource, /connectKasware/);
   assert.match(browserSource, /signPskt/);
   assert.match(browserSource, /deleteSecretForGame/);

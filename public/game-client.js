@@ -45,7 +45,7 @@ export function initClient() {
   return clientReady;
 }
 
-export async function createGame({ wallet, side, number, stakeKas, rpcUrl }) {
+export async function createGame({ wallet, side, number, stakeKas, rpcUrl, matchmaking = false }) {
   await initClient();
   const rpc = new WrpcClient({ url: rpcUrl });
   const feerate = await readFeerate(rpc);
@@ -74,6 +74,7 @@ export async function createGame({ wallet, side, number, stakeKas, rpcUrl }) {
   });
   await bindSecretToGame(gameId, secret.secretId);
   logInfo('client_create_broadcast');
+  const creation = { creatorPublicKey: wallet.publicKey, creatorCommitment: secret.commitment, side, stakeKas, deadlineDaa: String(deadlineDaa), creatorAddress: wallet.address };
   const record = {
     gameId,
     network: NETWORK,
@@ -92,12 +93,12 @@ export async function createGame({ wallet, side, number, stakeKas, rpcUrl }) {
     stakeKas,
     deadlineDaa: String(deadlineDaa),
     status: 'created',
-    matchmaking: false,
+    matchmaking,
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
   };
   await saveGame(record);
-  return { gameId, inviteUrl: inviteUrl(gameId, { creatorPublicKey: wallet.publicKey, creatorCommitment: secret.commitment, side, stakeKas, deadlineDaa, creatorAddress: wallet.address }) };
+  return { gameId, inviteUrl: inviteUrl(gameId, creation), creation };
 }
 
 export async function joinGame({ wallet, gameId, creation, number, rpcUrl }) {

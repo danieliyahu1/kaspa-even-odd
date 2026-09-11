@@ -67,22 +67,58 @@ export class BackendGameService {
     return this.#matchResponse(await this.store.loadMatch(matchId), playerAddress);
   }
 
-  async submitMatchVote(matchId, input) {
+  // The match creator publishes the on-chain creation here so the paired joiner
+  // can rebuild the state-0 covenant and join. Only non-secret creation state is
+  // relayed; the reveal choice never leaves the browser.
+  async publishCreation(matchId, input) {
     const address = this.#matchmakingAddress(input.address);
-    this.#logPlayer('matchmaking_vote', address, { matchId });
-    const commitment = normalizeHex(input.commitment, 32, 'matchmaking commitment');
     const match = await this.store.loadMatch(matchId);
     const player = this.#matchPlayer(match, address);
-    if (!['matched', 'ready', 'started'].includes(match.status) || match.players.length !== 2) {
-      throw new ProtocolError('MATCH_NOT_READY', 'Wait until a rival is found before locking your vote');
+    if (match.status === 'waiting' || match.players.length !== 2) {
+      throw new ProtocolError('MATCH_NOT_READY', 'Wait until a rival is found before starting the game');
     }
-    if (player.commitment && player.commitment !== commitment) throw new ProtocolError('MATCH_VOTE_LOCKED', 'Your vote is already locked for this match');
+    if (match.players.indexOf(player) !== match.creatorIndex) {
+      throw new ProtocolError('NOT_A_PLAYER', 'Only the match creator can publish the game');
+    }
+    const creation = this.#publishedCreation(input.creation);
+    if (creation.creatorAddress !== address) {
+      throw new ProtocolError('INVALID_GAME_STATE', 'The published game must belong to the match creator');
+    }
+    if (creation.side !== match.creatorSide) {
+      throw new ProtocolError('INVALID_GAME_STATE', 'The published side must match the assigned side');
+    }
     const updated = await this.store.updateMatch(matchId, (current) => {
-      const participant = current.players.find((item) => item.address === address);
-      participant.commitment = commitment;
-      if (current.status !== 'started' && current.players.length === 2 && current.players.every((item) => item.commitment)) current.status = 'ready';
+      current.creation = creation;
+      current.gameId = creation.gameId;
+      current.status = 'started';
     });
+    this.#logPlayer('matchmaking_creation', address, { matchId, gameId: creation.gameId });
+    this.metrics.recordGameEvent('matchmaking_creation');
     return this.#matchResponse(updated, address);
+  }
+
+  #publishedCreation(creation) {
+    if (!creation || typeof creation !== 'object') throw new ProtocolError('INVALID_GAME_STATE', 'A published creation is required');
+    const side = creation.side === 'even' ? 'even' : creation.side === 'odd' ? 'odd' : null;
+    if (!side) throw new ProtocolError('INVALID_GAME_STATE', 'Creator side must be even or odd');
+    const stakeKas = Number(creation.stakeKas);
+    if (!Number.isInteger(stakeKas) || stakeKas < 1) throw new ProtocolError('INVALID_GAME_STATE', 'Stake must be a positive whole number of KAS');
+    let deadlineDaa;
+    try {
+      deadlineDaa = BigInt(creation.deadlineDaa);
+    } catch {
+      throw new ProtocolError('INVALID_GAME_STATE', 'Deadline DAA must be a positive integer');
+    }
+    if (deadlineDaa <= 0n) throw new ProtocolError('INVALID_GAME_STATE', 'Deadline DAA must be positive');
+    return {
+      gameId: validateGameId(creation.gameId),
+      creatorPublicKey: normalizePublicKey(creation.creatorPublicKey, 'creator public key'),
+      creatorCommitment: normalizeHex(creation.creatorCommitment, 32, 'creator commitment'),
+      side,
+      stakeKas,
+      deadlineDaa: String(deadlineDaa),
+      creatorAddress: this.#matchmakingAddress(creation.creatorAddress),
+    };
   }
 
   async leaveMatchmaking(matchId, address) {
@@ -597,20 +633,17 @@ export class BackendGameService {
     if (!match) throw new ProtocolError('MATCH_NOT_FOUND', 'Matchmaking session was not found');
     const index = match.players.findIndex((player) => player.address === address);
     if (index < 0) throw new ProtocolError('NOT_A_PLAYER', 'This wallet is not part of the matchmaking session');
-    const creatorIndex = match.creatorIndex;
-    const creatorSide = match.creatorSide;
-    const isCreator = match.status !== 'waiting' && index === creatorIndex;
-    const side = creatorSide === (isCreator ? 'even' : 'odd') ? 'even' : 'odd';
+    const isCreator = match.status !== 'waiting' && index === match.creatorIndex;
+    const side = match.creatorSide === (isCreator ? 'even' : 'odd') ? 'even' : 'odd';
     return {
       matchId: match.matchId,
       status: match.status,
       role: match.status === 'waiting' ? null : isCreator ? 'creator' : 'joiner',
       side: match.status === 'waiting' ? null : side,
       gameId: match.gameId ?? null,
+      creation: match.creation ?? null,
       stakeKas: MATCH_STAKE_KAS,
-      ready: match.status === 'ready' || match.status === 'started',
       opponentConnected: match.players.length === 2,
-      voteLocked: Boolean(match.players[index].commitment),
     };
   }
 

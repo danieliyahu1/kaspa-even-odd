@@ -46,12 +46,12 @@ export class BackendGameStore {
     return this.#updateWithResult((data) => {
       const now = Date.now();
       for (const match of Object.values(data.matches)) {
-        if (!['waiting', 'matched', 'ready'].includes(match.status)) continue;
+        if (!['waiting', 'matched'].includes(match.status)) continue;
         const lastSeen = Math.min(...match.players.map((player) => Date.parse(player.lastSeenAt ?? player.joinedAt ?? '')));
         if (!Number.isFinite(lastSeen) || now - lastSeen > MATCH_WAIT_TIMEOUT_MS) match.status = 'cancelled';
       }
       data.queue = data.queue.filter((matchId) => data.matches[matchId]?.status === 'waiting');
-      const active = Object.values(data.matches).find((match) => ['waiting', 'matched', 'ready'].includes(match.status)
+      const active = Object.values(data.matches).find((match) => ['waiting', 'matched'].includes(match.status)
         && match.players.some((item) => item.address === player.address));
       if (active) {
         active.status = 'cancelled';
@@ -108,7 +108,7 @@ export class BackendGameStore {
       const match = data.matches[matchId];
       if (!match) return;
       match.players = match.players.filter((player) => player.address !== address);
-      if (['waiting', 'matched', 'ready'].includes(match.status)) {
+      if (['waiting', 'matched'].includes(match.status)) {
         match.status = 'cancelled';
         data.queue = data.queue.filter((id) => id !== matchId);
       }
