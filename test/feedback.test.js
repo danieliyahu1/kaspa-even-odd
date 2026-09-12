@@ -11,9 +11,6 @@ import {
   TelegramFeedback,
   FeedbackService,
   FEEDBACK_MAX_MESSAGE,
-  FEEDBACK_MAX_PAGE,
-  FEEDBACK_MAX_SCREEN,
-  FEEDBACK_MAX_BROWSER,
 } from '../src/feedback.js';
 import { Metrics } from '../src/metrics.js';
 import { bech32Encode } from '../src/hashes/bech32.mjs';
@@ -32,57 +29,18 @@ test('validateFeedback rejects messages over the length limit', () => {
   assert.throws(() => validateFeedback({ message: 'x'.repeat(FEEDBACK_MAX_MESSAGE + 1) }), { code: 'FEEDBACK_TOO_LONG' });
 });
 
-test('validateFeedback returns trimmed, capped fields', () => {
-  const result = validateFeedback({
-    message: '  The reveal felt confusing  ',
-    page: '/game?id=abc123',
-    screen: '390x844',
-    browser: 'Chrome 128',
-  });
+test('validateFeedback returns a trimmed message', () => {
+  const result = validateFeedback({ message: '  The reveal felt confusing  ' });
   assert.equal(result.message, 'The reveal felt confusing');
-  assert.equal(result.page, '/game?id=abc123');
-  assert.equal(result.screen, '390x844');
-  assert.equal(result.browser, 'Chrome 128');
 });
 
-test('validateFeedback caps long fields silently', () => {
-  const result = validateFeedback({
-    message: 'ok',
-    page: '/'.repeat(FEEDBACK_MAX_PAGE + 200),
-    screen: '9'.repeat(FEEDBACK_MAX_SCREEN + 200),
-    browser: 'b'.repeat(FEEDBACK_MAX_BROWSER + 200),
-  });
-  assert.equal(result.page.length, FEEDBACK_MAX_PAGE);
-  assert.equal(result.screen.length, FEEDBACK_MAX_SCREEN);
-  assert.equal(result.browser.length, FEEDBACK_MAX_BROWSER);
-});
-
-test('validateFeedback strips control characters from capped fields', () => {
-  const result = validateFeedback({ message: 'good', page: '/foo\r\nbar\tx' });
-  assert.ok(!result.page.includes('\r'));
-  assert.ok(!result.page.includes('\n'));
-  assert.ok(!result.page.includes('\t'));
-});
-
-test('formatFeedbackMessage includes only message and context, not identities', () => {
-  const now = new Date('2026-09-12T18:42:00.000Z');
-  const entry = { message: 'The reveal button felt off.', page: '/game', screen: '390x844', browser: 'Chrome 128' };
-  const text = formatFeedbackMessage(entry, now);
-  assert.ok(text.includes('New Even/Odd feedback'));
-  assert.ok(text.includes('The reveal button felt off.'));
-  assert.ok(text.includes('Page: /game'));
-  assert.ok(text.includes('Screen: 390x844'));
-  assert.ok(text.includes('Browser: Chrome 128'));
-  assert.ok(text.includes('2026-09-12 18:42 UTC'));
-  assert.doesNotMatch(text, /address/i);
-  assert.doesNotMatch(text, /kaspatest:/);
-});
-
-test('formatFeedbackMessage omits empty fields', () => {
-  const text = formatFeedbackMessage({ message: 'simple feedback' });
-  assert.ok(text.includes('simple feedback'));
+test('formatFeedbackMessage is the title and the message, nothing else', () => {
+  const text = formatFeedbackMessage({ message: 'The reveal button felt off.' });
+  assert.equal(text, 'New Even/Odd feedback\n\nThe reveal button felt off.');
   assert.doesNotMatch(text, /Page:/);
   assert.doesNotMatch(text, /Screen:/);
+  assert.doesNotMatch(text, /Browser:/);
+  assert.doesNotMatch(text, /Received:|address|kaspatest:/i);
 });
 
 test('TelegramFeedback reports enabled only when both token and chat id are set', () => {
@@ -103,8 +61,7 @@ test('TelegramFeedback.deliver posts to the Telegram sendMessage endpoint', asyn
     calls.push({ url, body: JSON.parse(options.body) });
     return { ok: true };
   };
-  const now = () => new Date('2026-09-12T18:42:00.000Z');
-  const tg = new TelegramFeedback({ botToken: 'tok', chatId: '42', fetchImpl, now });
+  const tg = new TelegramFeedback({ botToken: 'tok', chatId: '42', fetchImpl });
   const entry = { message: 'Test feedback', page: '/rival' };
   await tg.deliver(entry);
   assert.equal(calls.length, 1);
@@ -290,7 +247,7 @@ test('feedback endpoint accepts valid submissions and persists them to disk', as
   const res = await fetch(`http://127.0.0.1:${port}/api/feedback`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message: 'Loved the game', page: '/rival', screen: '390x844', browser: 'Chrome 128' }),
+    body: JSON.stringify({ message: 'Loved the game' }),
   });
   assert.equal(res.status, 202);
   const body = await res.json();

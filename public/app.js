@@ -844,12 +844,7 @@ function initFeedback() {
     send.disabled = true;
     showNote();
     try {
-      await api('/api/feedback', { method: 'POST', body: {
-        message,
-        page: location.pathname,
-        screen: `${window.screen?.width}x${window.screen?.height}`,
-        browser: navigator.userAgent.slice(0, 200),
-      } });
+      await api('/api/feedback', { method: 'POST', body: { message } });
       closeDialog();
       showToast('Thanks. Your feedback was sent.');
     } catch (error) {

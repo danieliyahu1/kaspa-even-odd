@@ -16,9 +16,6 @@ import { readFile, rename, writeFile } from 'node:fs/promises';
 import { ProtocolError } from './protocol.js';
 
 export const FEEDBACK_MAX_MESSAGE = 1500;
-export const FEEDBACK_MAX_PAGE = 128;
-export const FEEDBACK_MAX_SCREEN = 32;
-export const FEEDBACK_MAX_BROWSER = 200;
 
 export function validateFeedback(input = {}) {
   const message = typeof input.message === 'string' ? input.message.trim() : '';
@@ -26,38 +23,18 @@ export function validateFeedback(input = {}) {
   if (message.length > FEEDBACK_MAX_MESSAGE) {
     throw new ProtocolError('FEEDBACK_TOO_LONG', `Feedback must be at most ${FEEDBACK_MAX_MESSAGE} characters`);
   }
-  return {
-    message,
-    page: cap(input.page, FEEDBACK_MAX_PAGE),
-    screen: cap(input.screen, FEEDBACK_MAX_SCREEN),
-    browser: cap(input.browser, FEEDBACK_MAX_BROWSER),
-  };
+  return { message };
 }
 
-function cap(value, max) {
-  return typeof value === 'string' ? value.trim().replace(/[\r\n\t]+/g, ' ').slice(0, max) : '';
-}
-
-export function formatFeedbackMessage(entry, now = new Date()) {
-  const details = [];
-  if (entry.page) details.push(`Page: ${entry.page}`);
-  if (entry.screen) details.push(`Screen: ${entry.screen}`);
-  if (entry.browser) details.push(`Browser: ${entry.browser}`);
-  details.push(`Received: ${formatUtc(now)}`);
-  return [`New Even/Odd feedback`, '', entry.message, '', details.join('\n')].join('\n');
-}
-
-function formatUtc(date) {
-  const pad = (value) => String(value).padStart(2, '0');
-  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())} UTC`;
+export function formatFeedbackMessage(entry) {
+  return [`New Even/Odd feedback`, '', entry.message].join('\n');
 }
 
 export class TelegramFeedback {
-  constructor({ botToken, chatId, fetchImpl = fetch, now = () => new Date() } = {}) {
+  constructor({ botToken, chatId, fetchImpl = fetch } = {}) {
     this.botToken = botToken;
     this.chatId = chatId;
     this.fetchImpl = fetchImpl;
-    this.now = now;
   }
 
   get enabled() {
@@ -71,7 +48,7 @@ export class TelegramFeedback {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         chat_id: this.chatId,
-        text: formatFeedbackMessage(entry, this.now()),
+        text: formatFeedbackMessage(entry),
         disable_web_page_preview: true,
       }),
     });
