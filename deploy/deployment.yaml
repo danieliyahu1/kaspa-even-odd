@@ -62,11 +62,13 @@ spec:
                 secretKeyRef:
                   name: kaspa-even-odd-telegram
                   key: botToken
+                  optional: true
             - name: TELEGRAM_FEEDBACK_CHAT_ID
               valueFrom:
                 secretKeyRef:
                   name: kaspa-even-odd-telegram
                   key: chatId
+                  optional: true
           volumeMounts:
             - name: game-state
               mountPath: /var/lib/kaspa-even-odd
