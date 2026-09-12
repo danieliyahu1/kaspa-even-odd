@@ -8,14 +8,13 @@ import { prepareRevealTransaction, prepareTerminalTransaction, serializeTerminal
 import { parityOutcome, verifyRevealPreimage } from './reveal.js';
 import { blake2b256 } from './hashes/blake2b.mjs';
 import { FALLBACK_CLAIM_DAA_OFFSET, FIVE_MINUTE_DAA_OFFSET, NO_REVEAL_REFUND_DAA_OFFSET, safetyReadiness } from './terminal-actions.js';
-import { playerLockSompi, grossPotSompi, gameFeeSompi, winnerPayoutSompi, NETWORK, PROTOCOL_VERSION, ProtocolError, validateGameFeePublicKey, validateGameId } from './protocol.js';
+import { playerLockSompi, grossPotSompi, gameFeeSompi, winnerPayoutSompi, MIN_STAKE_KAS, stakeToSompi, NETWORK, PROTOCOL_VERSION, ProtocolError, validateGameFeePublicKey, validateGameId } from './protocol.js';
 import { noopMetrics } from './metrics.js';
 import { EphemeralPreparations } from './ephemeral-preparations.js';
 import { KaspaChainAdapter } from './chain-adapter.js';
 import { logger } from './logger.js';
 import { loadWasmSdk } from './wasm-transaction.js';
 
-const MATCH_STAKE_KAS = 1;
 const TERMINAL_FEE_SOMPI = 4_200_000n;
 const MAX_TERMINAL_STORAGE_MASS = 500_000;
 
@@ -46,14 +45,33 @@ export class BackendGameService {
   async joinMatchmaking(input) {
     const address = this.#matchmakingAddress(input.address);
     const publicKey = normalizePublicKey(input.publicKey, 'matchmaking public key');
-    const match = await this.store.joinMatchmaking({ matchId: randomUUID(), address, publicKey });
-    this.#logPlayer('matchmaking_join', address, { matchId: match.matchId, status: match.status });
+    const limitKas = input.limitKas === undefined ? MIN_STAKE_KAS : Number(input.limitKas);
+    stakeToSompi(limitKas);
+    const match = await this.store.joinMatchmaking({ matchId: randomUUID(), address, publicKey, limitKas });
+    this.#logPlayer('matchmaking_join', address, { matchId: match.matchId, status: match.status, limitKas });
     if (match.status === 'matched' && match.players.length === 2) {
-      this.#logPlayer('matchmaking_paired', match.players[0].address, { matchId: match.matchId, opponentAddress: match.players[1].address });
+      this.#logPlayer('matchmaking_paired', match.players[0].address, { matchId: match.matchId, opponentAddress: match.players[1].address, stakeKas: match.stakeKas });
     }
     this.metrics.recordGameEvent('matchmaking_join');
     await this.#recordMatchmakingBacklog();
     return this.#matchResponse(match, address);
+  }
+
+  async confirmMatchmaking(matchId, address, stakeKas) {
+    const playerAddress = this.#matchmakingAddress(address);
+    const match = await this.store.loadMatch(matchId);
+    const player = this.#matchPlayer(match, playerAddress);
+    if (player.confirmed) return this.#matchResponse(match, playerAddress);
+    if (match.status !== 'matched' || match.stakeKas === null || match.players.length !== 2) {
+      throw new ProtocolError('MATCH_NOT_READY', 'This match has no stake to accept yet');
+    }
+    if (Number(stakeKas) !== match.stakeKas) {
+      throw new ProtocolError('INVALID_STAKE', 'The stake you accept must match the agreed game');
+    }
+    this.#logPlayer('matchmaking_confirm', playerAddress, { matchId, stakeKas });
+    const updated = await this.store.confirmMatchmaking(matchId, playerAddress);
+    this.metrics.recordGameEvent('matchmaking_confirm');
+    return this.#matchResponse(updated, playerAddress);
   }
 
   async matchmakingStatus(matchId, address) {
@@ -745,7 +763,7 @@ const candidates = fundingCandidates(ordinary, targetSompi);
     if (!match) throw new ProtocolError('MATCH_NOT_FOUND', 'Matchmaking session was not found');
     const creator = this.#matchPlayer(match, request.creatorAddress);
     const creatorIndex = match.players.indexOf(creator);
-    if (match.status !== 'matched' || creatorIndex !== match.creatorIndex) {
+    if (match.status !== 'ready' || creatorIndex !== match.creatorIndex) {
       throw new ProtocolError('MATCH_NOT_READY', 'Only the match creator can publish the game');
     }
     const updated = await this.store.updateMatch(matchId, (current) => {
@@ -770,7 +788,7 @@ const candidates = fundingCandidates(ordinary, targetSompi);
     const player = this.#matchPlayer(match, input.creatorAddress);
     const playerIndex = match.players.indexOf(player);
     const assignedSide = this.#assignedSide(match, playerIndex);
-    if (match.status !== 'matched' || match.players.length !== 2 || playerIndex !== match.creatorIndex || input.stakeKas !== MATCH_STAKE_KAS || input.side !== assignedSide) {
+    if (match.status !== 'ready' || match.players.length !== 2 || playerIndex !== match.creatorIndex || input.stakeKas !== match.stakeKas || input.side !== assignedSide) {
       throw new ProtocolError('MATCH_NOT_READY', 'This matchmaking game is not ready to start');
     }
   }
@@ -833,6 +851,8 @@ const candidates = fundingCandidates(ordinary, targetSompi);
     if (index < 0) throw new ProtocolError('NOT_A_PLAYER', 'This wallet is not part of the matchmaking session');
     const isCreator = match.status !== 'waiting' && index === match.creatorIndex;
     const side = match.status === 'waiting' ? null : this.#assignedSide(match, index);
+    const mine = match.players[index];
+    const rival = match.players.length === 2 ? match.players[1 - index] : null;
     return {
       matchId: match.matchId,
       status: match.status,
@@ -840,7 +860,11 @@ const candidates = fundingCandidates(ordinary, targetSompi);
       side: match.status === 'waiting' ? null : side,
       gameId: match.gameId ?? null,
       creation: match.creation ?? null,
-      stakeKas: MATCH_STAKE_KAS,
+      stakeKas: match.stakeKas ?? null,
+      myLimitKas: mine.limitKas ?? MIN_STAKE_KAS,
+      rivalLimitKas: rival ? rival.limitKas ?? MIN_STAKE_KAS : null,
+      confirmed: Boolean(mine.confirmed),
+      opponentConfirmed: Boolean(rival?.confirmed ?? false),
       opponentConnected: match.players.length === 2,
     };
   }

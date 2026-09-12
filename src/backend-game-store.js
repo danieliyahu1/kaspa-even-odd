@@ -5,6 +5,7 @@ import { ProtocolError } from './protocol.js';
 import { noopMetrics } from './metrics.js';
 
 const MATCH_WAIT_TIMEOUT_MS = 30_000;
+const DEFAULT_LIMIT_KAS = 1;
 
 // Durable persistence for the backend game engine. Matchmaking sessions, game
 // records, and non-secret transaction preparations are written atomically to a
@@ -81,20 +82,37 @@ export class BackendGameStore {
       const waiting = data.queue
         .map((matchId) => data.matches[matchId])
         .find((match) => match?.status === 'waiting');
-      const participant = { ...player, joinedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString() };
+      const limitKas = Number.isInteger(player.limitKas) ? player.limitKas : DEFAULT_LIMIT_KAS;
+      const participant = { ...player, limitKas, joinedAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), confirmed: false };
       if (!waiting) {
-        const match = { matchId: player.matchId, status: 'waiting', players: [participant], createdAt: participant.joinedAt };
+        const match = { matchId: player.matchId, status: 'waiting', players: [participant], stakeKas: null, createdAt: participant.joinedAt };
         data.matches[match.matchId] = match;
         data.queue.push(match.matchId);
         return match;
       }
 
       waiting.players.push(participant);
+      waiting.stakeKas = Math.min(waiting.players[0].limitKas ?? DEFAULT_LIMIT_KAS, participant.limitKas);
       waiting.status = 'matched';
       waiting.creatorIndex = randomInt(2);
       waiting.creatorSide = randomInt(2) === 0 ? 'even' : 'odd';
       data.queue = data.queue.filter((matchId) => matchId !== waiting.matchId);
       return waiting;
+    });
+  }
+
+  async confirmMatchmaking(matchId, address) {
+    return this.#updateWithResult((data) => {
+      const match = data.matches[matchId];
+      if (!match || !Array.isArray(match.players)) return null;
+      const player = match.players.find((item) => item.address === address);
+      if (!player) return match;
+      player.confirmed = true;
+      if (match.players.length === 2 && match.players.every((item) => item.confirmed)) {
+        match.status = 'ready';
+        data.queue = data.queue.filter((id) => id !== matchId);
+      }
+      return match;
     });
   }
 
