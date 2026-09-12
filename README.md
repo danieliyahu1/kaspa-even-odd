@@ -204,6 +204,19 @@ directly, so the server decodes the address at startup and bakes that key
   browser, add `?debug=1` (or set `localStorage['kaspa-debug'] = '1'`)
   for verbose `[even-odd]` console tracing of the wallet flow; warnings and
   errors are always printed.
+- Feedback: the top-bar **Feedback** button posts anonymous feedback to
+  `POST /api/feedback`. The server validates it (1–1,500 characters), writes it
+  to the state volume before anything can fail, and forwards it to a private
+  Telegram chat via `sendMessage` (`parse_mode` off, web preview disabled). The
+  bot token (`TELEGRAM_FEEDBACK_BOT_TOKEN`) and chat id
+  (`TELEGRAM_FEEDBACK_CHAT_ID`) are runtime-only configuration read from the
+  `kaspa-even-odd-telegram` Secret; the endpoint returns 503 until both are
+  set. Feedback carries only the message, page, viewport, and a truncated user
+  agent — never a wallet address, game id, transaction, or query string, and the
+  text is never logged. Deliveries that fail are queued at `FEEDBACK_SPILL_PATH`
+  (default `/var/lib/kaspa-even-odd/feedback-spill.json`) and retried on startup
+  and every two minutes until they land. A per-client limit of five submissions
+  per ten minutes keeps the channel spam-free.
 
 Observability:
 
