@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
+import { createServer } from 'node:http';
 import {
   validateFeedback,
   formatFeedbackMessage,
@@ -165,13 +166,23 @@ test('FeedbackService.submit spills but still returns accepted when delivery fai
   assert.equal(spill.entries.length, 1);
 });
 
-test('FeedbackService.submit throws when Telegram is not configured', async () => {
-  const deliverer = { enabled: false, deliver: async () => {} };
-  const service = new FeedbackService({ deliverer, spill: new FeedbackSpill({}) });
-  await assert.rejects(
-    () => service.submit({ message: 'gone' }),
-    { code: 'FEEDBACK_UNAVAILABLE' },
-  );
+test('FeedbackService.submit accepts with a warning when Telegram is not configured', async () => {
+  const warnings = [];
+  const service = new FeedbackService({
+    deliverer: { enabled: false },
+    spill: new FeedbackSpill({}),
+    metrics: new Metrics(),
+    logger: { warn: (event, fields) => warnings.push({ event, fields }) },
+  });
+
+  const result = await service.submit({ message: 'offline note' });
+  assert.equal(result.accepted, true);
+  assert.equal(result.queued, undefined);
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].event, 'feedback_delivery_disabled');
+  assert.ok(warnings[0].fields.reason.includes('TELEGRAM_FEEDBACK_BOT_TOKEN'));
+  assert.ok(service.spill.entries.length === 0);
+  assert.ok(service.metrics.render().includes('kaspa_feedback_total{outcome="disabled"}'));
 });
 
 test('FeedbackService.drainPending retries spilled entries', async (t) => {
@@ -190,7 +201,7 @@ test('FeedbackService.drainPending retries spilled entries', async (t) => {
   assert.equal(spill.entries.length, 0);
 });
 
-test('feedback endpoint is unavailable when TELEGRAM env vars are missing', async (t) => {
+test('feedback endpoint accepts with a warning when Telegram is not configured', async (t) => {
   const port = 6100 + Math.floor(Math.random() * 300);
   const metricsPort = port + 600;
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-feedback-'));
@@ -200,12 +211,15 @@ test('feedback endpoint is unavailable when TELEGRAM env vars are missing', asyn
       PORT: String(port),
       METRICS_PORT: String(metricsPort),
       GAME_STORE_PATH: join(directory, 'games.json'),
+      FEEDBACK_SPILL_PATH: join(directory, 'spill.json'),
       GAME_FEE_ADDRESS: feeAddress,
       RATE_LIMIT_PER_MINUTE: '300',
-      LOG_LEVEL: 'error',
+      LOG_LEVEL: 'warn',
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let logs = '';
+  child.stderr.on('data', (chunk) => { logs += chunk; });
   t.after(() => child.kill());
   t.after(() => rm(directory, { recursive: true, force: true }));
   await waitForServer(`http://127.0.0.1:${port}/readyz`);
@@ -213,16 +227,20 @@ test('feedback endpoint is unavailable when TELEGRAM env vars are missing', asyn
   const res = await fetch(`http://127.0.0.1:${port}/api/feedback`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ message: 'test' }),
+    body: JSON.stringify({ message: 'still accepted' }),
   });
-  assert.equal(res.status, 503);
+  assert.equal(res.status, 202);
   const body = await res.json();
-  assert.equal(body.error, 'FEEDBACK_UNAVAILABLE');
+  assert.equal(body.accepted, true);
+  assert.equal(body.queued, undefined);
+  assert.match(logs, /feedback_delivery_disabled/);
 });
 
-test('feedback endpoint accepts valid submissions and persists them to disk', async (t) => {
+test('feedback endpoint stores undeliverable feedback and retries it against the configured endpoint', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'even-odd-feedback-post-'));
   const spillPath = join(dir, 'spill.json');
+  const telegram = await startMockTelegram({ fail: true });
+  t.after(() => telegram.close());
   const port = 6400 + Math.floor(Math.random() * 300);
   const metricsPort = port + 600;
   const child = spawn(process.execPath, ['src/server.js'], {
@@ -235,6 +253,7 @@ test('feedback endpoint accepts valid submissions and persists them to disk', as
       FEEDBACK_SPILL_PATH: spillPath,
       TELEGRAM_FEEDBACK_BOT_TOKEN: 'dummy-token-for-test',
       TELEGRAM_FEEDBACK_CHAT_ID: 'dummy-chat-id',
+      FEEDBACK_TELEGRAM_SEND_URL: telegram.endpoint,
       RATE_LIMIT_PER_MINUTE: '300',
       LOG_LEVEL: 'error',
     },
@@ -252,8 +271,17 @@ test('feedback endpoint accepts valid submissions and persists them to disk', as
   assert.equal(res.status, 202);
   const body = await res.json();
   assert.equal(body.accepted, true);
+  assert.equal(body.queued, true);
 
-  // Delivery fails (dummy token) so the entry should have been persisted.
+  // The app must have called our configured endpoint with the exact payload it
+  // would have sent to Telegram.
+  assert.equal(telegram.requests.length, 1);
+  assert.equal(telegram.requests[0].method, 'POST');
+  assert.equal(telegram.requests[0].body.chat_id, 'dummy-chat-id');
+  assert.equal(telegram.requests[0].body.text, 'New Even/Odd feedback\n\nLoved the game');
+  assert.equal(telegram.requests[0].body.disable_web_page_preview, true);
+
+  // Delivery failed, so the feedback must be stored and retried later.
   for (let i = 0; i < 10; i++) {
     try {
       const raw = await readFile(spillPath, 'utf8');
@@ -270,8 +298,53 @@ test('feedback endpoint accepts valid submissions and persists them to disk', as
   assert.fail('Expected a spilled entry to appear on disk');
 });
 
+test('feedback endpoint delivers immediately and leaves the queue empty when Telegram responds', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'even-odd-feedback-deliver-'));
+  const spillPath = join(dir, 'spill.json');
+  const telegram = await startMockTelegram({ fail: false });
+  t.after(() => telegram.close());
+  const port = 6450 + Math.floor(Math.random() * 300);
+  const metricsPort = port + 600;
+  const child = spawn(process.execPath, ['src/server.js'], {
+    env: {
+      ...process.env,
+      PORT: String(port),
+      METRICS_PORT: String(metricsPort),
+      GAME_STORE_PATH: join(dir, 'games.json'),
+      GAME_FEE_ADDRESS: feeAddress,
+      FEEDBACK_SPILL_PATH: spillPath,
+      TELEGRAM_FEEDBACK_BOT_TOKEN: 'dummy-token-for-test',
+      TELEGRAM_FEEDBACK_CHAT_ID: 'dummy-chat-id',
+      FEEDBACK_TELEGRAM_SEND_URL: telegram.endpoint,
+      RATE_LIMIT_PER_MINUTE: '300',
+      LOG_LEVEL: 'error',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill());
+  t.after(() => rm(dir, { recursive: true, force: true }));
+  await waitForServer(`http://127.0.0.1:${port}/readyz`);
+
+  const res = await fetch(`http://127.0.0.1:${port}/api/feedback`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ message: 'Delivered straight away' }),
+  });
+  assert.equal(res.status, 202);
+  const body = await res.json();
+  assert.equal(body.accepted, true);
+  assert.equal(body.queued, undefined);
+  assert.equal(telegram.requests.length, 1);
+  assert.equal(telegram.requests[0].body.text, 'New Even/Odd feedback\n\nDelivered straight away');
+
+  const raw = await readFile(spillPath, 'utf8');
+  assert.deepEqual(JSON.parse(raw), []);
+});
+
 test('feedback endpoint rejects empty messages', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'even-odd-feedback-empty-'));
+  const telegram = await startMockTelegram({ fail: false });
+  t.after(() => telegram.close());
   const port = 6700 + Math.floor(Math.random() * 300);
   const metricsPort = port + 600;
   const child = spawn(process.execPath, ['src/server.js'], {
@@ -284,6 +357,7 @@ test('feedback endpoint rejects empty messages', async (t) => {
       GAME_FEE_ADDRESS: feeAddress,
       TELEGRAM_FEEDBACK_BOT_TOKEN: 'dummy',
       TELEGRAM_FEEDBACK_CHAT_ID: 'dummy',
+      FEEDBACK_TELEGRAM_SEND_URL: telegram.endpoint,
       RATE_LIMIT_PER_MINUTE: '300',
       LOG_LEVEL: 'error',
     },
@@ -305,6 +379,8 @@ test('feedback endpoint rejects empty messages', async (t) => {
 
 test('feedback endpoint enforces the per-client rate limit', async (t) => {
   const dir = await mkdtemp(join(tmpdir(), 'even-odd-feedback-rate-'));
+  const telegram = await startMockTelegram({ fail: true });
+  t.after(() => telegram.close());
   const port = 7000 + Math.floor(Math.random() * 300);
   const metricsPort = port + 600;
   const child = spawn(process.execPath, ['src/server.js'], {
@@ -317,6 +393,7 @@ test('feedback endpoint enforces the per-client rate limit', async (t) => {
       GAME_FEE_ADDRESS: feeAddress,
       TELEGRAM_FEEDBACK_BOT_TOKEN: 'dummy',
       TELEGRAM_FEEDBACK_CHAT_ID: 'dummy',
+      FEEDBACK_TELEGRAM_SEND_URL: telegram.endpoint,
       RATE_LIMIT_PER_MINUTE: '300',
       LOG_LEVEL: 'error',
     },
@@ -347,4 +424,32 @@ async function waitForServer(url) {
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error('Local server did not start');
+}
+
+// A contract-faithful stand-in for the Telegram `sendMessage` endpoint. The
+// tests drive our app against this local server instead of the real third
+// party; it records the POST bodies our app sends and answers with the same
+// shape Telegram would (200 + ok body, or a non-OK status).
+async function startMockTelegram({ fail }) {
+  const requests = [];
+  const server = createServer((req, res) => {
+    let raw = '';
+    req.on('data', (chunk) => { raw += chunk; });
+    req.on('end', () => {
+      requests.push({ method: req.method, body: JSON.parse(raw || '{}') });
+      const status = fail ? 500 : 200;
+      const body = fail
+        ? { ok: false, error_code: 500, description: 'Service unavailable' }
+        : { ok: true, result: { message_id: requests.length } };
+      res.writeHead(status, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(body));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const { port } = server.address();
+  return {
+    requests,
+    endpoint: `http://127.0.0.1:${port}/sendMessage`,
+    close: () => new Promise((resolve) => server.close(resolve)),
+  };
 }

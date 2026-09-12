@@ -210,13 +210,16 @@ directly, so the server decodes the address at startup and bakes that key
   Telegram chat via `sendMessage` (`parse_mode` off, web preview disabled). The
   bot token (`TELEGRAM_FEEDBACK_BOT_TOKEN`) and chat id
   (`TELEGRAM_FEEDBACK_CHAT_ID`) are runtime-only configuration read from the
-  `kaspa-even-odd-telegram` Secret; the endpoint returns 503 until both are
-  set. Feedback is just the message the user wrote — no wallet address, game
-  id, transaction, page, or query string is attached, and the text is never
-  logged. Deliveries that fail are queued at `FEEDBACK_SPILL_PATH`
+  `kaspa-even-odd-telegram` Secret. Feedback is just the message the user wrote
+  — no wallet address, game id, transaction, page, or query string is attached,
+  and the text is never logged. When Telegram is not configured the app still
+  accepts the feedback, records a `kaspa_feedback_total{outcome="disabled"}`
+  metric, and logs a `feedback_delivery_disabled` warning so a missing bot never
+  breaks the app. Deliveries that fail are queued at `FEEDBACK_SPILL_PATH`
   (default `/var/lib/kaspa-even-odd/feedback-spill.json`) and retried on startup
-  and every two minutes until they land. A per-client limit of five submissions
-  per ten minutes keeps the channel spam-free.
+  and every two minutes until they land, so a Telegram outage never loses a
+  message. A per-client limit of five submissions per ten minutes keeps the
+  channel spam-free.
 
 Observability:
 

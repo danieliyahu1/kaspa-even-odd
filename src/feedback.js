@@ -1,16 +1,17 @@
 // Anonymous user feedback delivery.
 //
-// The browser sends only a message plus non-identifying context (page,
-// viewport, user agent). The server validates it, durably writes it to a spill
-// queue before anything can fail, forwards it to a private Telegram chat via
-// `sendMessage`, and silently retries queued entries until they land. The bot
-// token and chat id come from the environment and never reach the browser, and
-// the feedback text itself is never logged.
+// The browser sends only a message. The server validates it, durably writes it
+// to a spill queue before anything can fail, forwards it to a private Telegram
+// chat via `sendMessage`, and silently retries queued entries until they land.
+// A Telegram outage therefore never loses feedback: the entry is stored first
+// and sent when the bot is reachable again. The bot token and chat id come from
+// the environment and never reach the browser, and the feedback text itself is
+// never logged.
 //
 // Telegram is deliberately invisible to the user: from their point of view the
 // app accepts "a bug, an idea, or something that felt confusing" and thanks
-// them. The endpoint stays unavailable (503) when Telegram is not configured
-// rather than pretending feedback was collected.
+// them. If Telegram is not configured the app still thanks the user and logs a
+// warning, because a missing bot must not break the rest of the app.
 import { randomUUID } from 'node:crypto';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { ProtocolError } from './protocol.js';
@@ -31,10 +32,11 @@ export function formatFeedbackMessage(entry) {
 }
 
 export class TelegramFeedback {
-  constructor({ botToken, chatId, fetchImpl = fetch } = {}) {
+  constructor({ botToken, chatId, fetchImpl = fetch, endpoint } = {}) {
     this.botToken = botToken;
     this.chatId = chatId;
     this.fetchImpl = fetchImpl;
+    this.endpoint = endpoint ?? `https://api.telegram.org/bot${botToken}/sendMessage`;
   }
 
   get enabled() {
@@ -43,7 +45,7 @@ export class TelegramFeedback {
 
   async deliver(entry) {
     if (!this.enabled) throw new Error('Telegram feedback is not configured');
-    const response = await this.fetchImpl(`https://api.telegram.org/bot${this.botToken}/sendMessage`, {
+    const response = await this.fetchImpl(this.endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
@@ -132,7 +134,10 @@ export class FeedbackService {
   async submit(input) {
     const feedback = validateFeedback(input);
     if (!this.deliverer.enabled) {
-      throw new ProtocolError('FEEDBACK_UNAVAILABLE', 'Feedback is not available right now');
+      const reason = 'TELEGRAM_FEEDBACK_BOT_TOKEN or TELEGRAM_FEEDBACK_CHAT_ID is not set';
+      this.metrics?.recordFeedback({ outcome: 'disabled' });
+      this.logger.warn?.('feedback_delivery_disabled', { reason });
+      return { accepted: true };
     }
     const entry = await this.spill.add(feedback);
     try {

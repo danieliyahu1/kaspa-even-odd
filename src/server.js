@@ -64,13 +64,14 @@ const gameService = new BackendGameService({ rpc, store, metrics, gameFeePublicK
 const relay = new RelayStore();
 const mutatingLimiter = new RateLimiter({ limit: rateLimitPerMinute, windowMs: 60_000 });
 
-// Anonymous feedback: the browser posts a short message plus non-identifying
-// context, and the server forwards it to a private Telegram chat. The bot
-// token and chat id are runtime-only configuration; without them the endpoint
-// reports itself unavailable instead of pretending feedback was collected.
+// Anonymous feedback: the browser posts a short message, and the server
+// forwards it to a private Telegram chat. The bot token and chat id are
+// runtime-only configuration; when they are missing the app still accepts the
+// feedback and logs a warning so a missing bot never breaks the app.
 const feedbackDeliverer = new TelegramFeedback({
   botToken: process.env.TELEGRAM_FEEDBACK_BOT_TOKEN,
   chatId: process.env.TELEGRAM_FEEDBACK_CHAT_ID,
+  endpoint: process.env.FEEDBACK_TELEGRAM_SEND_URL,
 });
 const feedbackSpill = new FeedbackSpill({
   filePath: process.env.FEEDBACK_SPILL_PATH ?? join('.data', 'feedback-spill.json'),
@@ -83,9 +84,13 @@ const feedbackService = new FeedbackService({
 });
 // Retry accepted-but-undelivered feedback (crashes, Telegram outages) on
 // startup and then periodically until it lands.
-void feedbackService.drainPending().catch((error) => logger.debug('feedback_drain_failed', { message: error?.message }));
-const feedbackDrainTimer = setInterval(() => { void feedbackService.drainPending().catch((error) => logger.debug('feedback_drain_failed', { message: error?.message })); }, 120_000);
-feedbackDrainTimer.unref();
+if (feedbackDeliverer.enabled) {
+  void feedbackService.drainPending().catch((error) => logger.debug('feedback_drain_failed', { message: error?.message }));
+  const feedbackDrainTimer = setInterval(() => { void feedbackService.drainPending().catch((error) => logger.debug('feedback_drain_failed', { message: error?.message })); }, 120_000);
+  feedbackDrainTimer.unref();
+} else {
+  logger.warn('feedback_delivery_disabled', { reason: 'TELEGRAM_FEEDBACK_BOT_TOKEN or TELEGRAM_FEEDBACK_CHAT_ID is not set' });
+}
 // Long-window per-client cap for feedback (the shared limiter still applies too).
 const feedbackLimiter = new RateLimiter({ limit: 5, windowMs: 10 * 60_000 });
 
@@ -283,10 +288,9 @@ function sendError(res, error) {
   const code = error?.code ?? 'INTERNAL_ERROR';
   const clientError = error instanceof ProtocolError || ['INVALID_JSON', 'REQUEST_TOO_LARGE', 'RELAY_PAYLOAD_TOO_LARGE', 'REQUEST_ABORTED'].includes(code);
   const notFound = ['GAME_NOT_FOUND', 'PREPARATION_NOT_FOUND', 'MATCH_NOT_FOUND'].includes(code);
-  const unavailable = code === 'FEEDBACK_UNAVAILABLE';
   res.kaspaError = { code, message: error?.message ?? 'Operation failed' };
   if (!clientError) logger.error('server_error', { code, message: error?.message, stack: error?.stack });
-  sendJson(res, unavailable ? 503 : notFound ? 404 : clientError ? 400 : 502, {
+  sendJson(res, notFound ? 404 : clientError ? 400 : 502, {
     error: code,
     message: clientError ? error.message : 'Kaspa testnet10 backend is unavailable',
   });
