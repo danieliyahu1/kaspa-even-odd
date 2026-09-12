@@ -72,6 +72,7 @@ legend { display: block; margin-bottom: 10px; color: var(--muted); font-size: 11
 .notice strong { display: block; margin-bottom: 2px; font-size: 12px; }
 .notice.error { border-color: var(--red); background: rgba(255,107,90,.13); }
 .notice.warn { border-color: #d8a44a; background: rgba(216,164,74,.15); }
+.notice .actions { margin-top: 10px; }
 
 .confirm-banner { display: flex; align-items: center; gap: 12px; padding: 14px 16px; margin-bottom: 20px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg); }
 .confirm-title { color: var(--muted); font-size: 14px; }
