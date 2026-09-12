@@ -55,6 +55,18 @@ spec:
                 secretKeyRef:
                   name: kaspa-even-odd-fee
                   key: address
+            - name: FEEDBACK_SPILL_PATH
+              value: /var/lib/kaspa-even-odd/feedback-spill.json
+            - name: TELEGRAM_FEEDBACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: kaspa-even-odd-telegram
+                  key: botToken
+            - name: TELEGRAM_FEEDBACK_CHAT_ID
+              valueFrom:
+                secretKeyRef:
+                  name: kaspa-even-odd-telegram
+                  key: chatId
           volumeMounts:
             - name: game-state
               mountPath: /var/lib/kaspa-even-odd

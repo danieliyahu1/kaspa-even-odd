@@ -9,6 +9,7 @@ import { WrpcClient } from './wrpc-client.js';
 import { Metrics, withRpcMetrics } from './metrics.js';
 import { RelayStore } from './relay-store.js';
 import { RateLimiter } from './rate-limit.js';
+import { FeedbackService, FeedbackSpill, TelegramFeedback } from './feedback.js';
 import { logger } from './logger.js';
 
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
@@ -62,6 +63,36 @@ const gameService = new BackendGameService({ rpc, store, metrics, gameFeePublicK
 // receiving client, so the relay cannot alter the game.
 const relay = new RelayStore();
 const mutatingLimiter = new RateLimiter({ limit: rateLimitPerMinute, windowMs: 60_000 });
+
+// Anonymous feedback: the browser posts a short message, and the server
+// forwards it to a private Telegram chat. The bot token and chat id are
+// runtime-only configuration; when they are missing the app still accepts the
+// feedback and logs a warning so a missing bot never breaks the app.
+const feedbackDeliverer = new TelegramFeedback({
+  botToken: process.env.TELEGRAM_FEEDBACK_BOT_TOKEN,
+  chatId: process.env.TELEGRAM_FEEDBACK_CHAT_ID,
+  endpoint: process.env.FEEDBACK_TELEGRAM_SEND_URL,
+});
+const feedbackSpill = new FeedbackSpill({
+  filePath: process.env.FEEDBACK_SPILL_PATH ?? join('.data', 'feedback-spill.json'),
+});
+const feedbackService = new FeedbackService({
+  deliverer: feedbackDeliverer,
+  spill: feedbackSpill,
+  metrics,
+  logger,
+});
+// Retry accepted-but-undelivered feedback (crashes, Telegram outages) on
+// startup and then periodically until it lands.
+if (feedbackDeliverer.enabled) {
+  void feedbackService.drainPending().catch((error) => logger.debug('feedback_drain_failed', { message: error?.message }));
+  const feedbackDrainTimer = setInterval(() => { void feedbackService.drainPending().catch((error) => logger.debug('feedback_drain_failed', { message: error?.message })); }, 120_000);
+  feedbackDrainTimer.unref();
+} else {
+  logger.warn('feedback_delivery_disabled', { reason: 'TELEGRAM_FEEDBACK_BOT_TOKEN or TELEGRAM_FEEDBACK_CHAT_ID is not set' });
+}
+// Long-window per-client cap for feedback (the shared limiter still applies too).
+const feedbackLimiter = new RateLimiter({ limit: 5, windowMs: 10 * 60_000 });
 
 await store.init();
 
@@ -123,6 +154,14 @@ async function routeRequest(req, res, pathname) {
 
   if (req.method === 'GET' && pathname === '/api/config') {
     return sendJson(res, 200, await gameService.networkStatus());
+  }
+  if (req.method === 'POST' && pathname === '/api/feedback') {
+    const decision = feedbackLimiter.check(clientAddress(req));
+    if (!decision.allowed) {
+      res.setHeader('retry-after', String(decision.retryAfterSeconds));
+      return sendJson(res, 429, { error: 'RATE_LIMITED', message: 'Too many submissions; please wait a bit before sending more feedback' });
+    }
+    return sendJson(res, 202, await feedbackService.submit(await readJson(req)));
   }
   if (req.method === 'POST' && pathname === '/api/games/prepare') {
     return sendJson(res, 200, await gameService.prepareCreation(await readJson(req)));
@@ -278,6 +317,7 @@ function routeLabel(pathname) {
   if (pathname === '/healthz') return '/healthz';
   if (pathname === '/readyz') return '/readyz';
   if (pathname === '/api/config') return '/api/config';
+  if (pathname === '/api/feedback') return '/api/feedback';
   if (pathname === '/api/games/prepare') return '/api/games/prepare';
   if (pathname === '/api/games/submit') return '/api/games/submit';
   if (pathname === '/api/matchmaking/join') return '/api/matchmaking/join';
@@ -336,6 +376,8 @@ logger.info('server_started', {
   network: configuredNetwork,
   gameFeePublicKey,
   storePath: process.env.GAME_STORE_PATH ?? '.data/games.json',
+  feedbackTelegram: feedbackDeliverer.enabled,
+  feedbackSpillPath: process.env.FEEDBACK_SPILL_PATH ?? join('.data', 'feedback-spill.json'),
   logLevel: logger.level,
   pid: process.pid,
 });

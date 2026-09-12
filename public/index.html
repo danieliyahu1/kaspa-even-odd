@@ -17,11 +17,27 @@
       </a>
       <div class="topbar-actions">
         <div class="network"><span class="pulse" aria-hidden="true"></span><span>Kaspa</span><span class="network-separator" aria-hidden="true">/</span><span>testnet-10</span></div>
+        <button type="button" class="feedback-button" id="feedback-button" aria-haspopup="dialog">Feedback</button>
         <button type="button" class="wallet-button" id="wallet-button">Connect Wallet</button>
       </div>
     </header>
     <div id="wallet-notice" class="wallet-notice" role="status" aria-live="polite"></div>
     <main id="app"></main>
+    <dialog id="feedback-dialog" class="feedback-dialog" aria-labelledby="feedback-title">
+      <form id="feedback-form" class="feedback-form" novalidate>
+        <div class="feedback-head">
+          <h2 id="feedback-title">Tell us anything</h2>
+          <button type="button" class="feedback-close" id="feedback-close" aria-label="Close">&times;</button>
+        </div>
+        <label class="feedback-label" for="feedback-text">A bug, an idea, or something that felt confusing.</label>
+        <textarea id="feedback-text" name="message" rows="5" maxlength="1500" placeholder="What should we improve?" aria-describedby="feedback-hint"></textarea>
+        <p id="feedback-hint" class="feedback-hint">Anonymous. Sent straight to us.</p>
+        <div id="feedback-note" role="status" aria-live="polite"></div>
+        <div class="actions feedback-actions">
+          <button type="submit" class="primary" id="feedback-send">Send feedback</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="/app.js"></script>
   </body>
 </html>
