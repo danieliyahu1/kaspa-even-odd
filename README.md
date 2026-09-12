@@ -79,13 +79,13 @@ from SilverScript `v1.0.0` (whose emitted artifact/compiler identifier remains
 `0.1.0`) from `covenant/even_odd.sil` into
 `covenant/even_odd.template.artifact.json`:
 
-- **contract**: `EvenOdd`, template hash `8c8d50e0…98249`
-- **state span**: `offset 1, len 219` (11 fields: `creator_hash`,
-  `joiner_hash`, `creator_commit`, `joiner_commit`, `pot`, `deadline_daa`,
+- **contract**: `EvenOdd`, template hash `51e3313a…e040c38`
+- **state span**: `offset 1, len 252` (12 fields: `creator_hash`,
+  `joiner_hash`, `creator_commit`, `joiner_commit`, `stake`, `deadline_daa`,
   `creator_even`, `creator_choice`, `joiner_choice`, `first_revealer_hash`,
-  `status`)
+  `game_wallet_hash`, `status`)
 - **dispatch tags**: `join = b1d2ce8f`, `refund = 762ffa55`
-- **terminal dispatch tags**: `reveal = be6bd383`, `fallback_claim = 786ae157`,
+- **terminal dispatch tags**: `reveal = 6b547798`, `fallback_claim = e8bae487`,
   `refund_player = 7e21ac29`
 - **P2SH-256**: `0xaa 0x20 <blake2b-256(redeemScript)>`; address prefix
   `kaspatest`, version byte 8.
@@ -170,14 +170,13 @@ Runtime details:
   directly; all chain reads, fee estimation, transaction preparation, and
   broadcast happen server-side.
 - The 1% on-chain game fee: `GAME_FEE_ADDRESS` is the `kaspatest:` wallet
-  address of the game wallet that receives `2F` (2% of the displayed stake)
-  when a game settles with a winner (second reveal or fallback claim). Kaspa
+  address of the game wallet that receives 1% of the total locked pot when a
+  game settles with a winner (second reveal or fallback claim). Kaspa
   version-0 (PubKey) addresses embed the recipient's x-only public key
   directly, so the server decodes the address at startup and bakes that key
-  into every game's covenant state. Each player escrows displayed stake plus
-  1%; refunds and no-reveal flows return the exact escrow, so the fee is only
-  ever created as a separate winner-funded output, never deducted from a
-  player's stake. The process fails closed: it refuses to start when neither
+  into every game's covenant state. Each player locks exactly the displayed
+  stake; refunds and no-reveal flows return that full lock, while winner
+  settlement pays the fee from the total pot. The process fails closed: it refuses to start when neither
   `GAME_FEE_ADDRESS` nor the raw-key fallback `GAME_FEE_PUBLIC_KEY` is
   provided, so a misconfigured pod never serves games without a fee
   recipient. Create the cluster Secret out-of-band (its value never lives in

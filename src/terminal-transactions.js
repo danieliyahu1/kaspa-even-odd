@@ -1,4 +1,4 @@
-import { escrowSompi, joinedEscrowSompi, potFeeSompi, ProtocolError } from './protocol.js';
+import { playerLockSompi, grossPotSompi, gameFeeSompi, winnerPayoutSompi, ProtocolError } from './protocol.js';
 import { getCovenantTemplate } from './covenant/template.mjs';
 import { hexToBytes, bytesToHex } from './hashes/hex.mjs';
 import {
@@ -39,9 +39,9 @@ export function prepareFallbackClaimTransaction({ game, caller, currentDaaScore,
     gameInput,
     inputSequence: FALLBACK_CLAIM_DAA_OFFSET,
     args: [publicKey, walletPublicKey],
-    payoutValue: game.potSompi,
+    payoutValue: winnerPayoutSompi(game.stakeSompi),
     recipientScriptPublicKey,
-    extraOutputs: [{ value: potFeeSompi(game.stakeSompi), scriptPublicKey: feeScriptPublicKey }],
+    extraOutputs: [{ value: gameFeeSompi(game.stakeSompi), scriptPublicKey: feeScriptPublicKey }],
     feeInputs,
     feeSompi,
     change,
@@ -63,7 +63,7 @@ export function prepareRevealTransaction({ game, caller, currentDaaScore, secret
   }
   const revealArgs = [publicKey, { type: 'int', value: decision.choice }, decision.nonceHex, payoutPublicKey, walletPublicKey];
   if (isFirstReveal) {
-    const continued = joinedEscrowSompi(game.stakeSompi);
+    const continued = grossPotSompi(game.stakeSompi);
     return prepareTerminalTransaction({
       action: TERMINAL_ENTRIES.reveal,
       gameInput,
@@ -81,9 +81,9 @@ export function prepareRevealTransaction({ game, caller, currentDaaScore, secret
     action: TERMINAL_ENTRIES.reveal,
     gameInput,
     args: revealArgs,
-    payoutValue: game.potSompi,
+    payoutValue: winnerPayoutSompi(game.stakeSompi),
     recipientScriptPublicKey,
-    extraOutputs: [{ value: potFeeSompi(game.stakeSompi), scriptPublicKey: feeScriptPublicKey }],
+    extraOutputs: [{ value: gameFeeSompi(game.stakeSompi), scriptPublicKey: feeScriptPublicKey }],
     feeInputs,
     feeSompi,
     change,
@@ -93,7 +93,7 @@ export function prepareRevealTransaction({ game, caller, currentDaaScore, secret
 export function prepareIndividualRefundTransaction({ game, caller, currentDaaScore, gameInput, recipientScriptPublicKey, continuationScriptPublicKey, continuationCovenant, feeInputs = [], feeSompi = 0n, change, publicKey }) {
   const decision = resolveIndividualRefund({ game, caller, currentDaaScore });
   if (!decision.available) throw new ProtocolError('ACTION_UNAVAILABLE', decision.message);
-  const refund = escrowSompi(game.stakeSompi);
+  const refund = playerLockSompi(game.stakeSompi);
   const requiresContinuation = !Object.values(game.refunds ?? {}).some(Boolean);
   if (requiresContinuation && (typeof continuationScriptPublicKey !== 'string' || continuationScriptPublicKey.length === 0 || !continuationCovenant)) {
     throw new ProtocolError('INVALID_TRANSACTION', 'Refund continuation script public key is required');
@@ -161,15 +161,15 @@ export function validateRevealTemplate({ game, caller, currentDaaScore, secret, 
   }
   const tx = parseTransaction(transaction);
   if (!game.firstReveal) {
-    assertRevealContinuation(tx, joinedEscrowSompi(game.stakeSompi));
+    assertRevealContinuation(tx, grossPotSompi(game.stakeSompi));
   } else {
     const winner = parityOutcome({
       creatorChoice: caller === 'creator' ? decision.choice : game.creatorChoice,
       joinerChoice: caller === 'joiner' ? decision.choice : game.joinerChoice,
       creatorEven: game.creatorEven,
     });
-    assertSinglePayout(tx, game.potSompi, game.participants?.[winner]?.scriptPublicKey, 'winner payout');
-    assertGameFeeOutput(tx, potFeeSompi(game.stakeSompi));
+    assertSinglePayout(tx, winnerPayoutSompi(game.stakeSompi), game.participants?.[winner]?.scriptPublicKey, 'winner payout');
+    assertGameFeeOutput(tx, gameFeeSompi(game.stakeSompi));
   }
   assertFeeSeparated(tx);
   return tx;

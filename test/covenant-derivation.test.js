@@ -31,10 +31,10 @@ test('blake2b-256 multi-block matches the covenant-oracle digest', () => {
   const creatorPubkey = new Array(32).fill(7);
   const creatorCommit = new Array(32).fill(9);
   const inst = deriveGameInstance({ creatorPubkey, creatorCommit, stakeSompi: 100000000n, deadlineDaa: 500000000000n, gameWalletHash });
-  assert.equal(inst.redeemScript.length, 1635);
+  assert.equal(inst.redeemScript.length, 1595);
   assert.equal(
     Buffer.from(blake2b256(Uint8Array.from(inst.redeemScript))).toString('hex'),
-    '99ec99e92524c14c3e5481f2754de4cf897bbf7b22d06496e632e6163085223b'
+    '1e817cb9795b1dbf0343a5be4184b428625311c5d413cf582ea7e953ca91b5b7'
   );
 });
 
@@ -69,9 +69,9 @@ test('bech32 decode round-trips and rejects a corrupt checksum', () => {
 test('pinned template hash verifies against the compiled artifact', () => {
   const v = verifyTemplateHash();
   assert.equal(v.computed, EVEN_ODD_TEMPLATE.templateHash);
-  assert.equal(v.computed, 'e95114ba5240dfd7f10c316efda9d8e4e226cd23ab5ef75f4129c6b933457b76');
+  assert.equal(v.computed, '51e3313a139ddbb6ef70438513c3e9b89ee582800f59759344bbcdd70e040c38');
   assert.equal(v.prefixLen, 1);
-  assert.equal(v.suffixLen, 1382);
+  assert.equal(v.suffixLen, 1342);
   assert.equal(v.state.length, 252);
 });
 
@@ -98,10 +98,10 @@ test('per-game instance matches the covenant-oracle P2SH address', () => {
   const inst = deriveGameInstance({ creatorPubkey, creatorCommit, stakeSompi: 100000000n, deadlineDaa: 500000000000n, gameWalletHash });
   // Governed by the Rust covenant-oracle: encode_runtime_state_script + script_parts
   // + Address::new(Testnet, ScriptHash, blake2b256(instance)).
-  assert.equal(inst.address, 'kaspatest:pzv7ex0fy5jvznp72jqlya2dun8cj7al0v3dqeykucewv93ss53rkr8a3h673');
+  assert.equal(inst.address, 'kaspatest:pq0gzl9e09d3m0crgwjmusvyks5xy5c3ch2p8n6c96n7j572jx6mwtk3vz2gq');
   assert.equal(
     inst.p2shScript.toString('hex'),
-    'aa2099ec99e92524c14c3e5481f2754de4cf897bbf7b22d06496e632e6163085223b87'
+    'aa201e817cb9795b1dbf0343a5be4184b428625311c5d413cf582ea7e953ca91b5b787'
   );
   assert.equal(inst.templateHash, EVEN_ODD_TEMPLATE.templateHash);
   assert.equal(inst.address.startsWith('kaspatest:'), true);

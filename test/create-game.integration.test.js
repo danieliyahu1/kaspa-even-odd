@@ -8,7 +8,7 @@ import {
   recoverCreateGame,
 } from '../src/create-game.js';
 import { createGenesisGameOutput } from '../src/genesis-transaction.js';
-import { escrowSompi } from '../src/protocol.js';
+import { playerLockSompi } from '../src/protocol.js';
 
 const transactionId = 'c'.repeat(64);
 const request = prepareCreateGame({
@@ -24,7 +24,7 @@ const request = prepareCreateGame({
 });
 const input = {
   transactionId: '11'.repeat(32), index: 2, sequence: '0', sigOpCount: 0, computeBudget: 0, signatureScript: '',
-  utxo: { amount: String(escrowSompi(request.stakeSompi) + request.feeSompi), scriptPublicKey: '000051', blockDaaScore: '1', isCoinbase: false, covenantId: null },
+  utxo: { amount: String(playerLockSompi(request.stakeSompi) + request.feeSompi), scriptPublicKey: '000051', blockDaaScore: '1', isCoinbase: false, covenantId: null },
 };
 const policy = { authorizingInput: 0 };
 const transaction = {
@@ -89,7 +89,7 @@ test('creates, checkpoints, confirms, and exposes only the confirmed invite', as
     message: 'Game created. Waiting for Player B.',
     transactionId,
     gameId: transactionId,
-    inviteUrl: `https://example.test/join?v=EO%2Fv3&game=${transactionId}`,
+    inviteUrl: `https://example.test/join?v=EO%2Fv4&game=${transactionId}`,
   });
   assert.deepEqual(calls, { signed: 1, submitted: 1, confirmed: 1 });
   const saved = await store.load(createOperationKey(prepared));
@@ -106,7 +106,7 @@ test('rejects a wallet-signed transaction that reduces output zero to pay fees',
   const wallet = {
     sign: async () => {
       const signed = JSON.parse(signedSafeJson(prepared.txJson));
-      signed.outputs[0].value = String(escrowSompi(request.stakeSompi) - 1n);
+      signed.outputs[0].value = String(playerLockSompi(request.stakeSompi) - 1n);
       return JSON.stringify(signed);
     },
   };
@@ -283,7 +283,7 @@ test('round-trips a recovery after a signed-template mutation is rejected during
   const badWallet = {
     sign: async () => {
       const signed = JSON.parse(signedSafeJson(prepared.txJson));
-      signed.outputs[0].value = String(escrowSompi(request.stakeSompi) - 1n);
+      signed.outputs[0].value = String(playerLockSompi(request.stakeSompi) - 1n);
       return JSON.stringify(signed);
     },
   };

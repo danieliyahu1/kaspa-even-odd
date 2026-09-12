@@ -1,4 +1,4 @@
-import { escrowSompi, ProtocolError } from './protocol.js';
+import { playerLockSompi, ProtocolError } from './protocol.js';
 import { readAddressUtxos, KaspaCreationConfirmer } from './kaspa-adapter.js';
 import { selectOrdinaryUtxos } from './fee-policy.js';
 import { estimateFunding } from './funding.mjs';
@@ -64,7 +64,7 @@ export class KaspaChainAdapter {
     const confirmer = new KaspaCreationConfirmer({
       rpc: this.rpc,
       covenantAddress: this.covenantAddress,
-      escrowSompi: escrowSompi(request.stakeSompi),
+      playerLockSompi: playerLockSompi(request.stakeSompi),
       scriptPublicKey,
       outputIndex: this.outputIndex,
       attempts: this.confidenceAttempts,
@@ -78,12 +78,12 @@ export class KaspaChainAdapter {
     const entries = Array.isArray(utxos) ? utxos : utxos?.entries ?? [];
     const feeSompi = request.feeSompi ?? 0n;
     const stakeSompi = BigInt(game.stakeSompi ?? game.potSompi);
-    const escrow = escrowSompi(stakeSompi);
-    const selected = selectOrdinaryUtxos({ utxos: entries, targetSompi: escrow + feeSompi }).selected;
+    const lock = playerLockSompi(stakeSompi);
+    const selected = selectOrdinaryUtxos({ utxos: entries, targetSompi: lock + feeSompi }).selected;
     const selectedEntries = entries.filter((entry) => selected.some((item) => (entry.transactionId ?? entry.outpoint?.transactionId)?.toLowerCase() === item.transactionId && (entry.index ?? entry.outpoint?.index) === item.index));
     const total = selectedEntries.reduce((sum, entry) => sum + BigInt(entry.amount ?? entry.utxo?.amount), 0n);
-    const change = total > escrow + feeSompi
-      ? { value: total - escrow - feeSompi, scriptPublicKey: request.changeScriptPublicKey ?? selectedEntries[0]?.scriptPublicKey ?? selectedEntries[0]?.utxo?.scriptPublicKey }
+    const change = total > lock + feeSompi
+      ? { value: total - lock - feeSompi, scriptPublicKey: request.changeScriptPublicKey ?? selectedEntries[0]?.scriptPublicKey ?? selectedEntries[0]?.utxo?.scriptPublicKey }
       : undefined;
     const transaction = prepareJoinTransaction({
       game,

@@ -1,4 +1,4 @@
-import { escrowSompi, potFeeSompi, ProtocolError } from './protocol.js';
+import { playerLockSompi, gameFeeSompi, winnerPayoutSompi, ProtocolError } from './protocol.js';
 
 // testnet-10 targets 10 BPS. The PRD's five-minute waits therefore pin to
 // 300 seconds * 10 DAA-score increments per second.
@@ -108,8 +108,8 @@ export function validateFallbackClaimTemplate({ game, caller, currentDaaScore, t
   if (!resolved.available) throw new ProtocolError('ACTION_UNAVAILABLE', resolved.message);
   const tx = parseTransaction(transaction);
   const player = state.participants[caller];
-  assertSinglePayout(tx, state.potSompi, player.scriptPublicKey, 'fallback claim payout');
-  assertGameFeeOutput(tx, potFeeSompi(state.stakeSompi));
+  assertSinglePayout(tx, winnerPayoutSompi(state.stakeSompi), player.scriptPublicKey, 'fallback claim payout');
+  assertGameFeeOutput(tx, gameFeeSompi(state.stakeSompi));
   assertFeeSeparated(tx);
   return tx;
 }
@@ -120,7 +120,7 @@ export function validateIndividualRefundTemplate({ game, caller, currentDaaScore
   if (!resolved.available) throw new ProtocolError('ACTION_UNAVAILABLE', resolved.message);
   const tx = parseTransaction(transaction);
   const player = state.participants[caller];
-  const refund = escrowSompi(state.stakeSompi);
+  const refund = playerLockSompi(state.stakeSompi);
   assertSinglePayout(tx, refund, player.scriptPublicKey, 'individual refund payout');
   if (!Object.values(state.refunds).some(Boolean)) assertRefundContinuation(tx, refund);
   assertFeeSeparated(tx);

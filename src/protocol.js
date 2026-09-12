@@ -1,14 +1,17 @@
 import { bech32Decode } from './hashes/bech32.mjs';
 
-export const PROTOCOL_VERSION = 'EO/v3';
+export const PROTOCOL_VERSION = 'EO/v4';
 export const NETWORK = 'testnet-10';
 export const ADDRESS_PREFIX = 'kaspatest';
 export const MIN_STAKE_KAS = 1;
 export const MAX_STAKE_KAS = 100;
 export const SOMPI_PER_KAS = 100_000_000n;
-// Protocol v3: each player escrows a 1% game fee alongside their displayed
-// stake. The fee is only charged when a winner exists (second reveal or fallback
-// claim); canceled/no-reveal games refund the full escrow.
+// Protocol v4: the entered stake IS the complete per-player lock — no extra fee
+// is added on top. Both players fund `stake`, so the joined covenant holds
+// `grossPot = stake * 2`. When a winner exists (second reveal or fallback claim)
+// a single 1% fee of the total pot goes to the game wallet and the winner
+// receives the remainder. Canceled/no-reveal games refund each player their
+// full lock; the game fee is never charged without a winner.
 export const GAME_FEE_DENOMINATOR = 100n;
 export const GAME_FEE_NUMERATOR = 1n;
 
@@ -34,29 +37,24 @@ export function stakeToSompi(stakeKas) {
   return BigInt(stakeKas) * SOMPI_PER_KAS;
 }
 
-// Per-player game fee: 1% of the displayed stake.
-export function gameFeeSompi(stakeSompi) {
-  return assertStakeSompi(stakeSompi) * GAME_FEE_NUMERATOR / GAME_FEE_DENOMINATOR;
+// Complete per-player lock escrowed into the covenant: the entered stake.
+export function playerLockSompi(stakeSompi) {
+  return assertStakeSompi(stakeSompi);
 }
 
-// Per-player escrow lock: displayed stake plus its 1% fee reserve.
-export function escrowSompi(stakeSompi) {
-  return assertStakeSompi(stakeSompi) + gameFeeSompi(stakeSompi);
-}
-
-// Joined covenant deposit: both players' escrows.
-export function joinedEscrowSompi(stakeSompi) {
-  return escrowSompi(stakeSompi) * 2n;
-}
-
-// Winner payout: two displayed stakes (the pot).
-export function winnerPayoutSompi(stakeSompi) {
+// Gross pot held by the joined covenant: both players' locks.
+export function grossPotSompi(stakeSompi) {
   return assertStakeSompi(stakeSompi) * 2n;
 }
 
-// Game fee paid to the configured wallet when the game settles.
-export function potFeeSompi(stakeSompi) {
-  return gameFeeSompi(stakeSompi) * 2n;
+// Single game fee: 1% of the total pot, charged only when a winner exists.
+export function gameFeeSompi(stakeSompi) {
+  return grossPotSompi(stakeSompi) * GAME_FEE_NUMERATOR / GAME_FEE_DENOMINATOR;
+}
+
+// Winner payout: the gross pot minus the single game fee.
+export function winnerPayoutSompi(stakeSompi) {
+  return grossPotSompi(stakeSompi) - gameFeeSompi(stakeSompi);
 }
 
 export function validateGameFeePublicKey(value, name = 'game fee public key') {

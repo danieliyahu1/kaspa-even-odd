@@ -60,7 +60,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.deepEqual(await health.json().then(({ ok, service, network }) => ({ ok, service, network })), { ok: true, service: 'kaspa-even-odd', network: 'testnet-10' });
   assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/api/config`)).json(), {
     network: 'testnet-10',
-    protocolVersion: 'EO/v3',
+    protocolVersion: 'EO/v4',
     gameFeePublicKey: feePublicKey,
   });
   assert.equal(missing.status, 404);

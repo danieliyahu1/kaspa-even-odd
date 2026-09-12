@@ -9,7 +9,7 @@ import { prepareCreateGame } from '../src/create-game.js';
 import { createGenesisGameOutput, computeGenesisCovenantId } from '../src/genesis-transaction.js';
 import { createWasmGenesisSafeJson, verifyWasmSignedSafeJson } from '../src/wasm-transaction.js';
 import { deriveGameInstance } from '../src/covenant/even-odd.mjs';
-import { escrowSompi } from '../src/protocol.js';
+import { playerLockSompi } from '../src/protocol.js';
 
 const require = createRequire(import.meta.url);
 const VENDOR_DIR = fileURLToPath(new URL('../vendor/kaspa-wasm32-sdk/v2.0.1/nodejs/kaspa/', import.meta.url));
@@ -28,7 +28,7 @@ const request = prepareCreateGame({
   gameFeePublicKey: '11'.repeat(32),
 });
 
-function fundingInput(amount = escrowSompi(request.stakeSompi) + 400_000_000n) {
+function fundingInput(amount = playerLockSompi(request.stakeSompi) + 400_000_000n) {
   return {
     transactionId: '11'.repeat(32),
     index: 2,
@@ -117,7 +117,7 @@ test('WASM verify rejects mutation of the game output or input funds', () => {
   const prepared = createWasmGenesisSafeJson({ request, authorizingInput: 0, inputs: [fundingInput()] });
 
   const lowered = JSON.parse(prepared.txJson);
-  lowered.outputs[0].value = (escrowSompi(request.stakeSompi) - 1n).toString();
+  lowered.outputs[0].value = (playerLockSompi(request.stakeSompi) - 1n).toString();
   assert.throws(() => verifyWasmSignedSafeJson({ preparedTxJson: prepared.txJson, signedTxJson: JSON.stringify(lowered), policy: prepared.policy }), { code: 'SIGNED_TRANSACTION_MISMATCH' });
 
   const changedScript = JSON.parse(prepared.txJson);

@@ -14,14 +14,14 @@ use kaspa_txscript_errors::TxScriptError;
 use secp256k1::{Keypair, Secp256k1, SecretKey};
 use silverscript_abi::{ArtifactValue, SilAbiArtifact, encode_contract_entry_sig_script, encode_runtime_state_script};
 
-// Protocol v3 economics: each player escrows stake + 1%, settled games pay the
-// winner 2*stake (index 0) and the game wallet 2*(stake/100) (index 1),
-// canceled or no-reveal games refund the full escrow.
+// Protocol v4 economics: each player locks stake, settled games pay the winner
+// 2*stake - 1% of the total pot (index 0) and the game wallet that 1% (index 1),
+// canceled or no-reveal games refund the full lock.
 const STAKE: u64 = 100_000_000;
-const ESCROW: u64 = STAKE + STAKE / 100;
-const JOINED: u64 = ESCROW + ESCROW;
-const WINNER: u64 = STAKE + STAKE;
-const FEE: u64 = (STAKE / 100) + (STAKE / 100);
+const ESCROW: u64 = STAKE;
+const JOINED: u64 = STAKE + STAKE;
+const WINNER: u64 = JOINED - JOINED / 100;
+const FEE: u64 = JOINED / 100;
 const DEADLINE_DAA: u64 = 500_000_000;
 
 struct Player {

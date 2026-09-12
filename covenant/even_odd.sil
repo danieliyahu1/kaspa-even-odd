@@ -11,12 +11,13 @@ pragma silverscript ^0.1.0;
 //   5 = creator refunded; joiner escrow remains
 //   6 = joiner refunded; creator escrow remains
 //
-// Protocol v3 economics: every player escrows `stake + stake / 100` (a 1% game
-// fee reserve on top of their displayed stake). Completed games pay the winner
-// `stake + stake` at output index 0 and the game wallet `(stake / 100) + (stake
-// / 100)` at output index 1. Canceled or no-reveal games refund each player
-// their full escrow `stake + stake / 100` — the fee reserve is only charged when
-// a winner exists.
+// Protocol v4 economics: the entered stake IS the complete per-player lock.
+// The joined covenant holds `stake + stake` (the gross pot). Completed games
+// pay the winner `(stake + stake) - ((stake + stake) / 100)` at output index 0
+// and the game wallet `(stake + stake) / 100` at output index 1 — a single 1%
+// fee of the total pot, charged only when a winner exists. Canceled or
+// no-reveal games refund each player their full lock `stake` — the game fee is
+// never charged without a winner.
 //
 // The creator funds the covenant output holding their full escrow. Until a
 // joiner matches, only `refund` may spend it, and only after the `deadline_daa`
@@ -55,9 +56,9 @@ contract EvenOdd(
         require(tx.inputs[1].scriptPubKey == byte[](creator_spk));
         require(tx.daa >= deadline_daa);
 
-        // Exactly one payout: the creator gets their full escrow back.
+        // Exactly one payout: the creator gets their full lock back.
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
-        require(tx.outputs[0].value == stake + (stake / 100));
+        require(tx.outputs[0].value == stake);
         require(tx.outputs[0].scriptPubKey == byte[](creator_spk));
     }
 
@@ -72,16 +73,16 @@ contract EvenOdd(
         require(tx.inputs[1].scriptPubKey == byte[](joiner_spk));
 
         // Player B contributes ordinary signed wallet inputs matching their
-        // escrow. The open game is the only input in this covenant domain.
+        // lock. The open game is the only input in this covenant domain.
         byte[32] cov_id = OpInputCovenantId(this.activeInputIndex);
         require(OpCovInputCount(cov_id) == 1);
         require(OpCovInputIdx(cov_id, 0) == this.activeInputIndex);
-        require(tx.inputs[this.activeInputIndex].value == stake + (stake / 100));
+        require(tx.inputs[this.activeInputIndex].value == stake);
 
-        // One output continues this covenant with both escrows.
+        // One output continues this covenant with both locks (the gross pot).
         require(OpAuthOutputCount(this.activeInputIndex) == 1);
         int out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-        require(tx.outputs[out_idx].value == (stake + (stake / 100)) + (stake + (stake / 100)));
+        require(tx.outputs[out_idx].value == stake + stake);
 
         validateOutputState(out_idx, State {
             creator_hash: creator_hash,
@@ -125,7 +126,7 @@ contract EvenOdd(
             }
             require(OpAuthOutputCount(this.activeInputIndex) == 1);
             int out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
-            require(tx.outputs[out_idx].value == (stake + (stake / 100)) + (stake + (stake / 100)));
+            require(tx.outputs[out_idx].value == stake + stake);
             validateOutputState(out_idx, State {
                 creator_hash: creator_hash,
                 joiner_hash: joiner_hash,
@@ -161,9 +162,10 @@ contract EvenOdd(
             require(blake2b(byte[](payout_pk)) == winner_hash);
             byte[36] winner_spk = new ScriptPubKeyP2PK(payout_pk);
             byte[36] game_fee_spk = new ScriptPubKeyP2PK(wallet_pk);
-            require(tx.outputs[0].value == stake + stake);
+            int gross_pot = stake + stake;
+            require(tx.outputs[0].value == gross_pot - (gross_pot / 100));
             require(tx.outputs[0].scriptPubKey == byte[](winner_spk));
-            require(tx.outputs[1].value == (stake / 100) + (stake / 100));
+            require(tx.outputs[1].value == gross_pot / 100);
             require(tx.outputs[1].scriptPubKey == byte[](game_fee_spk));
         }
     }
@@ -176,10 +178,11 @@ contract EvenOdd(
         require(blake2b(byte[](player_pk)) == first_revealer_hash);
         require(blake2b(byte[](wallet_pk)) == game_wallet_hash);
         byte[36] game_fee_spk = new ScriptPubKeyP2PK(wallet_pk);
+        int gross_pot = stake + stake;
         require(OpAuthOutputCount(this.activeInputIndex) == 0);
-        require(tx.outputs[0].value == stake + stake);
+        require(tx.outputs[0].value == gross_pot - (gross_pot / 100));
         require(tx.outputs[0].scriptPubKey == byte[](player_spk));
-        require(tx.outputs[1].value == (stake / 100) + (stake / 100));
+        require(tx.outputs[1].value == gross_pot / 100);
         require(tx.outputs[1].scriptPubKey == byte[](game_fee_spk));
     }
 
@@ -191,20 +194,20 @@ contract EvenOdd(
         byte[32] player_hash = blake2b(byte[](player_pk));
         require(player_hash == creator_hash || player_hash == joiner_hash);
 
-        int escrow = stake + (stake / 100);
+        int lock = stake;
         if (status == 5) {
             require(player_hash == joiner_hash);
             require(OpAuthOutputCount(this.activeInputIndex) == 0);
-            require(tx.outputs[0].value == escrow);
+            require(tx.outputs[0].value == lock);
         } else if (status == 6) {
             require(player_hash == creator_hash);
             require(OpAuthOutputCount(this.activeInputIndex) == 0);
-            require(tx.outputs[0].value == escrow);
+            require(tx.outputs[0].value == lock);
         } else {
             require(OpAuthOutputCount(this.activeInputIndex) == 1);
             int out_idx = OpAuthOutputIdx(this.activeInputIndex, 0);
             require(out_idx != 0);
-            require(tx.outputs[out_idx].value == escrow);
+            require(tx.outputs[out_idx].value == lock);
             int next_status = 5;
             if (player_hash == joiner_hash) {
                 next_status = 6;
@@ -223,7 +226,7 @@ contract EvenOdd(
                 game_wallet_hash: game_wallet_hash,
                 status: next_status
             });
-            require(tx.outputs[0].value == escrow);
+            require(tx.outputs[0].value == lock);
         }
         require(tx.outputs[0].scriptPubKey == byte[](player_spk));
     }

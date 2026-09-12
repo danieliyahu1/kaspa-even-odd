@@ -141,9 +141,8 @@ fn main() -> ExitCode {
     println!("template_hash={}", faster_hex::hex_string(&contract.compiled.template_hash));
 
     let genesis_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x11; 32]), index: 2 };
-    // Each player escrows the displayed stake plus a 1% game fee; the oracle
-    // mirrors the JS genesis covenant by committing the full escrow.
-    let escrow_sompi = (stake_sompi as u64) + (stake_sompi as u64) / 100;
+    // The displayed stake is the complete per-player lock.
+    let escrow_sompi = stake_sompi as u64;
     let genesis_output = TransactionOutput {
         value: escrow_sompi,
         script_public_key: ScriptPublicKey::new(0, spk.into()),

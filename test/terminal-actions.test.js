@@ -108,8 +108,8 @@ test('refund is refused after any valid reveal and reports completed own refund'
 
 test('validates fallback claim payout and fee separation', () => {
   const tx = templateTx({
-    inputAmount: 202_010_000n,
-    outputValue: 200_000_000n,
+    inputAmount: 200_010_000n,
+    outputValue: 198_000_000n,
     scriptPublicKey: '000051',
     extraOutputs: [{ value: '2000000', scriptPublicKey: '000055' }],
   });
@@ -125,8 +125,8 @@ test('validates fallback claim payout and fee separation', () => {
     caller: 'creator',
     currentDaaScore: 5_000n,
     transaction: templateTx({
-      inputAmount: 201_999_999n,
-      outputValue: 200_000_000n,
+       inputAmount: 199_999_999n,
+       outputValue: 198_000_000n,
       scriptPublicKey: '000051',
       extraOutputs: [{ value: '2000000', scriptPublicKey: '000055' }],
     }),
@@ -135,17 +135,17 @@ test('validates fallback claim payout and fee separation', () => {
 
 test('validates individual refund pays only caller escrow', () => {
   const tx = templateTx({
-    inputAmount: 202_010_000n,
-    outputValue: 101_000_000n,
+    inputAmount: 200_010_000n,
+    outputValue: 100_000_000n,
     scriptPublicKey: '000052',
-    extraOutputs: [{ value: '101000000', scriptPublicKey: '0000aa20' + '00'.repeat(32) + '87', covenant: { authorizingInput: 0, covenantId: '33'.repeat(32) } }],
+    extraOutputs: [{ value: '100000000', scriptPublicKey: '0000aa20' + '00'.repeat(32) + '87', covenant: { authorizingInput: 0, covenantId: '33'.repeat(32) } }],
   });
   assert.equal(validateIndividualRefundTemplate({ game, caller: 'joiner', currentDaaScore: 4_000n, transaction: tx }), tx);
   assert.throws(() => validateIndividualRefundTemplate({
     game,
     caller: 'joiner',
     currentDaaScore: 4_000n,
-    transaction: templateTx({ inputAmount: 202_010_000n, outputValue: 101_000_000n, scriptPublicKey: '000052', extraOutputs: [{ value: '101000000', scriptPublicKey: '000051' }] }),
+    transaction: templateTx({ inputAmount: 200_010_000n, outputValue: 100_000_000n, scriptPublicKey: '000052', extraOutputs: [{ value: '100000000', scriptPublicKey: '000051' }] }),
   }), { code: 'INVALID_TRANSACTION' });
   assert.throws(() => validateIndividualRefundTemplate({
     game,
