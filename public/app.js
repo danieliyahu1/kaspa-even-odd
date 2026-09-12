@@ -42,7 +42,7 @@ function renderHome() {
         <p class="lead">A quick game of chance on Kaspa.</p>
       </div>
       <div class="home-actions">
-        <a class="primary home-button" href="/rival?start=1">Find a rival</a>
+        <a class="primary home-button" href="/rival">Find a rival</a>
         <a class="outline home-button" href="/host">Play with a friend</a>
       </div>
     </section>`;
@@ -52,8 +52,15 @@ function renderMatchmaking() {
   app.innerHTML = `
     <a class="back" href="/">Back</a>
     <section class="panel" aria-label="Find a rival">
-      <div class="panel-head"><h2>Find a rival</h2><p class="lead">Pick a number. We'll choose your side and match you for 1 KAS.</p></div>
+      <div class="panel-head"><h2>Find a rival</h2><p class="lead">Your limit &mdash; the most you're comfortable playing. We match you with anyone; the lower limit sets the game.</p></div>
       <div id="matchmaking-content">
+        <div class="stake-block">
+          <div class="stake-label-row">
+            <label for="match-limit">Play up to (KAS)</label>
+          </div>
+          <input id="match-limit" type="number" min="1" max="100" step="1" value="1" class="stake-input" aria-label="Play up to in KAS">
+          <p class="fate">Up to <span id="match-limit-fate">1 KAS</span> &mdash; matched with anyone.</p>
+        </div>
         <div class="actions"><button type="button" class="primary" id="match-start">Find a rival</button></div>
       </div>
     </section>`;
@@ -66,13 +73,24 @@ function renderMatchmaking() {
   let number = null;
   let started = false;
 
+  const limitInput = document.querySelector('#match-limit');
+  const limitFate = document.querySelector('#match-limit-fate');
+  const rawLimit = () => Math.floor(Number(limitInput.value) || 1);
+  const syncLimit = () => { limitFate.textContent = `${Math.min(100, Math.max(1, rawLimit()))} KAS`; };
+  limitInput.addEventListener('input', syncLimit);
+  syncLimit();
+
   async function startMatchmaking() {
     const button = document.querySelector('#match-start');
+    const typed = Number(limitInput.value);
+    if (!Number.isInteger(typed) || typed < 1 || typed > 100) {
+      return showNotice('#matchmaking-content', 'Enter a limit', 'Use a whole number from 1 to 100 KAS.', 'error');
+    }
     button.disabled = true;
     try {
       ({ provider, account } = await connectKasware('#matchmaking-content'));
       rememberAddress(account.address);
-      match = await api('/api/matchmaking/join', { method: 'POST', body: { address: account.address, publicKey: account.publicKey } });
+      match = await api('/api/matchmaking/join', { method: 'POST', body: { address: account.address, publicKey: account.publicKey, limitKas: rawLimit() } });
       renderMatchState();
       pollTimer = setInterval(() => { void refreshMatch(); }, 2500);
       await refreshMatch();
@@ -85,11 +103,10 @@ function renderMatchmaking() {
   }
 
   document.querySelector('#match-start').addEventListener('click', startMatchmaking);
-  if (params.get('start') === '1') void startMatchmaking();
 
   function renderMatchState() {
     if (match.status === 'waiting') {
-      content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Finding your rival</span></div><button type="button" class="outline" id="match-leave">Cancel</button>`;
+      content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Finding your rival</span></div><p class="muted-note">Up to ${escapeHtml(match.myLimitKas)} KAS. You'll pick your number once we match.</p><button type="button" class="outline" id="match-leave">Cancel</button>`;
       document.querySelector('#match-leave').addEventListener('click', leave);
       return;
     }
@@ -97,9 +114,14 @@ function renderMatchmaking() {
       content.innerHTML = '<div class="notice error"><strong>Your rival left.</strong>No KAS was locked.</div><div class="actions"><a class="primary home-button" href="/rival">Find another rival</a></div>';
       return;
     }
-    if (number === null) {
+    if (match.status === 'matched' && !match.confirmed) {
       content.innerHTML = `
-        <div class="notice"><strong>Rival found.</strong>You're ${escapeHtml(capitalize(match.side))}.</div>
+        <div class="notice"><strong>Rival found.</strong>You're ${escapeHtml(capitalize(match.side))}. The game is <strong>${escapeHtml(match.stakeKas)} KAS each</strong>.</div>
+        <p class="muted-note">You were in for up to ${escapeHtml(match.myLimitKas)} KAS. Your rival up to ${escapeHtml(match.rivalLimitKas)}. The lower limit wins.</p>
+        <div class="summary">
+          <div class="sum-item"><small>Stake</small><strong>${escapeHtml(match.stakeKas)} KAS</strong></div>
+          <div class="sum-item"><small>Pot</small><strong>${escapeHtml(match.stakeKas * 2)} KAS</strong></div>
+        </div>
         <fieldset class="choice-group">
           <legend>Your number</legend>
           <div class="choice-row">
@@ -107,10 +129,7 @@ function renderMatchmaking() {
             <button type="button" class="choice num" data-match-number="0" aria-pressed="false"><span class="num-big">2</span><small class="num-tag">Even</small></button>
           </div>
         </fieldset>
-        <div class="summary">
-          <div class="sum-item"><small>Stake</small><strong>${escapeHtml(match.stakeKas)} KAS</strong></div>
-          <div class="sum-item"><small>Pot</small><strong>${escapeHtml(match.stakeKas * 2)} KAS</strong></div>
-        </div>
+        ${match.opponentConfirmed ? '<p class="muted-note">Your rival already accepted the stake.</p>' : ''}
         <div id="match-number-notice"></div>
         <div class="actions"><button type="button" class="primary" id="match-play" disabled>Play for ${escapeHtml(match.stakeKas)} KAS</button></div>`;
       document.querySelectorAll('[data-match-number]').forEach((button) => button.addEventListener('click', () => {
@@ -122,20 +141,32 @@ function renderMatchmaking() {
         });
         document.querySelector('#match-play').disabled = false;
       }));
-      document.querySelector('#match-play').addEventListener('click', lockIn);
+      document.querySelector('#match-play').addEventListener('click', confirmAccept);
+      return;
+    }
+    if (match.status === 'matched') {
+      content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Waiting for your rival to accept ${escapeHtml(match.stakeKas)} KAS</span></div><button type="button" class="outline" id="match-leave">Cancel</button>`;
+      document.querySelector('#match-leave').addEventListener('click', leave);
       return;
     }
     const message = match.role === 'joiner' && !match.gameId
       ? 'Waiting for your rival to create the game'
-      : 'Preparing your game';
+      : `Playing for ${escapeHtml(match.stakeKas)} KAS. Preparing your game`;
     content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">${message}</span></div>`;
   }
 
-  async function lockIn() {
+  async function confirmAccept() {
     const button = document.querySelector('#match-play');
     button.disabled = true;
-    renderMatchState();
-    await advanceMatch();
+    try {
+      match = await api(`/api/matchmaking/${match.matchId}/confirm`, { method: 'POST', body: { address: account.address, stakeKas: match.stakeKas } });
+      renderMatchState();
+      await advanceMatch();
+    } catch (error) {
+      button.disabled = false;
+      logError('match_confirm_failed', { code: error.code, message: error.message });
+      showNotice('#matchmaking-content', 'Could not accept the game', error.message, 'error');
+    }
   }
 
   async function refreshMatch() {
@@ -145,7 +176,10 @@ function renderMatchmaking() {
       match = await api(`/api/matchmaking/${match.matchId}?address=${encodeURIComponent(account.address)}`);
       const changed = previous.status !== match.status
         || previous.opponentConnected !== match.opponentConnected
-        || previous.gameId !== match.gameId;
+        || previous.gameId !== match.gameId
+        || previous.confirmed !== match.confirmed
+        || previous.opponentConfirmed !== match.opponentConfirmed
+        || previous.stakeKas !== match.stakeKas;
       if (changed) renderMatchState();
       await advanceMatch();
     } catch (error) {
@@ -154,14 +188,14 @@ function renderMatchmaking() {
   }
 
   async function advanceMatch() {
-    // The creator creates as soon as they have picked; the joiner waits for the
-    // on-chain creation to appear (the join tx must spend it).
+    // The creator creates once both players have accepted the stake; the joiner
+    // waits for the on-chain creation to appear (the join tx must spend it).
     if (started || number === null) return;
-    if (match.role === 'creator' && !match.gameId) {
+    if (match.status === 'ready' && match.role === 'creator' && !match.gameId) {
       started = true;
       clearInterval(pollTimer);
       await startCreation();
-    } else if (match.role === 'joiner' && match.gameId) {
+    } else if (match.gameId && match.role === 'joiner') {
       started = true;
       clearInterval(pollTimer);
       await startJoin();
@@ -170,17 +204,17 @@ function renderMatchmaking() {
 
   async function startCreation() {
     try {
-      content.innerHTML = '<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Preparing your 1 KAS game</span></div>';
+      content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Preparing your ${escapeHtml(match.stakeKas)} KAS game</span></div>`;
       const secret = await createRevealSecret(number);
       const prepared = await api('/api/games/prepare', { method: 'POST', body: {
         creatorAddress: account.address,
         creatorPublicKey: account.publicKey,
         creatorCommitment: secret.commitment,
         side: match.side,
-        stakeKas: 1,
+        stakeKas: match.stakeKas,
         matchId: match.matchId,
       } });
-      await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side: match.side, stakeKas: 1, deadlineDaa: prepared.deadlineDaa, gameFeePublicKey: await gameFeePublicKey() });
+      await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side: match.side, stakeKas: match.stakeKas, deadlineDaa: prepared.deadlineDaa, gameFeePublicKey: await gameFeePublicKey() });
       showNotice('#matchmaking-content', 'Confirm in KasWare', `Approve ${lockKas(match.stakeKas)} KAS (your full stake).`, '');
       const signedTxJson = await signWithKasware(provider, prepared.txJson);
       if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
@@ -194,7 +228,7 @@ function renderMatchmaking() {
 
   async function startJoin() {
     try {
-      content.innerHTML = '<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Preparing your 1 KAS game</span></div>';
+      content.innerHTML = `<div class="waiting-row"><span class="spinner friend" aria-hidden="true"></span><span class="waiting-text">Preparing your ${escapeHtml(match.stakeKas)} KAS game</span></div>`;
       await waitForJoinableGame(match.gameId);
       const secret = await createRevealSecret(number);
       await bindSecretToGame(match.gameId, secret.secretId);
