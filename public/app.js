@@ -22,6 +22,7 @@ boot();
 async function boot() {
   try {
     initWalletButton();
+    initFeedback();
     if (location.pathname === '/join') return renderJoinEntry(params.get('game'));
     if (location.pathname === '/game') return renderGame(params.get('id') ?? params.get('game'));
     if (location.pathname === '/host') return renderCreate();
@@ -814,6 +815,58 @@ async function onWalletClick() {
 function clearWalletNotice() {
   const notice = document.querySelector('#wallet-notice');
   if (notice) notice.innerHTML = '';
+}
+
+function initFeedback() {
+  const button = document.querySelector('#feedback-button');
+  const dialog = document.querySelector('#feedback-dialog');
+  const form = document.querySelector('#feedback-form');
+  const text = document.querySelector('#feedback-text');
+  const note = document.querySelector('#feedback-note');
+  const send = document.querySelector('#feedback-send');
+  const close = document.querySelector('#feedback-close');
+  if (!button || !dialog || !form) return;
+
+  const showNote = (message = '', kind = '') => {
+    note.innerHTML = message ? `<div class="notice ${escapeHtml(kind)}"><strong>${escapeHtml(message)}</strong></div>` : '';
+  };
+  const open = () => { text.value = ''; showNote(); send.disabled = false; dialog.showModal(); text.focus(); };
+  const closeDialog = () => dialog.close();
+
+  button.addEventListener('click', open);
+  close.addEventListener('click', closeDialog);
+  dialog.addEventListener('close', showNote);
+
+  form.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const message = text.value.trim();
+    if (!message) { showNote('Write a few words first.', 'error'); return; }
+    send.disabled = true;
+    showNote();
+    try {
+      await api('/api/feedback', { method: 'POST', body: {
+        message,
+        page: location.pathname,
+        screen: `${window.screen?.width}x${window.screen?.height}`,
+        browser: navigator.userAgent.slice(0, 200),
+      } });
+      closeDialog();
+      showToast('Thanks. Your feedback was sent.');
+    } catch (error) {
+      send.disabled = false;
+      logError('feedback_submit_failed', { code: error.code, message: error.message });
+      showNote(error.message || 'Could not send feedback. Please try again.', 'error');
+    }
+  });
+}
+
+function showToast(message) {
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = message;
+  document.body.appendChild(toast);
+  requestAnimationFrame(() => { toast.classList.add('show'); });
+  setTimeout(() => { toast.classList.remove('show'); setTimeout(() => toast.remove(), 300); }, 2600);
 }
 
 function shortAddress(address) {
