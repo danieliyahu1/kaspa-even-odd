@@ -1,4 +1,4 @@
-import { ProtocolError } from './protocol.js';
+import { escrowSompi, potFeeSompi, ProtocolError } from './protocol.js';
 
 // testnet-10 targets 10 BPS. The PRD's five-minute waits therefore pin to
 // 300 seconds * 10 DAA-score increments per second.
@@ -109,6 +109,7 @@ export function validateFallbackClaimTemplate({ game, caller, currentDaaScore, t
   const tx = parseTransaction(transaction);
   const player = state.participants[caller];
   assertSinglePayout(tx, state.potSompi, player.scriptPublicKey, 'fallback claim payout');
+  assertGameFeeOutput(tx, potFeeSompi(state.stakeSompi));
   assertFeeSeparated(tx);
   return tx;
 }
@@ -119,8 +120,9 @@ export function validateIndividualRefundTemplate({ game, caller, currentDaaScore
   if (!resolved.available) throw new ProtocolError('ACTION_UNAVAILABLE', resolved.message);
   const tx = parseTransaction(transaction);
   const player = state.participants[caller];
-  assertSinglePayout(tx, state.stakeSompi, player.scriptPublicKey, 'individual refund payout');
-  if (!Object.values(state.refunds).some(Boolean)) assertRefundContinuation(tx, state.stakeSompi);
+  const refund = escrowSompi(state.stakeSompi);
+  assertSinglePayout(tx, refund, player.scriptPublicKey, 'individual refund payout');
+  if (!Object.values(state.refunds).some(Boolean)) assertRefundContinuation(tx, refund);
   assertFeeSeparated(tx);
   return tx;
 }
@@ -222,7 +224,14 @@ function assertSinglePayout(transaction, value, scriptPublicKey, name) {
 function assertRefundContinuation(transaction, value) {
   const continuations = transaction.outputs.filter((output) => BigInt(output?.value ?? -1) === value && output?.covenant);
   if (continuations.length !== 1) {
-    throw new ProtocolError('INVALID_TRANSACTION', 'First refund must preserve the other stake in one covenant continuation output');
+    throw new ProtocolError('INVALID_TRANSACTION', 'First refund must preserve the other escrow in one covenant continuation output');
+  }
+}
+
+function assertGameFeeOutput(transaction, value) {
+  const fees = transaction.outputs.filter((output) => BigInt(output?.value ?? -1) === value && !output?.covenant);
+  if (fees.length !== 1) {
+    throw new ProtocolError('INVALID_TRANSACTION', 'Transaction must contain exactly one game fee output');
   }
 }
 

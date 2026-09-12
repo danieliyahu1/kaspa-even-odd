@@ -160,12 +160,21 @@ Runtime details:
 - Liveness endpoint: `/healthz` (process liveness only)
 - Required runtime secrets: none. No ExternalSecret is needed; the `oci-vault`
   `ClusterSecretStore` contract is unused because the app has no server-side
-  secret. Wallet keys never leave the browser.
+  secret. `GAME_FEE_PUBLIC_KEY` is a public x-only key (not a private key),
+  so it is set as a plain environment value. Wallet private keys never leave
+  the browser.
 - Required network: `KASPA_NETWORK=testnet-10` (the process fails closed for
   any other value); `KASPA_WRPC_URL` pins the server's testnet-10 wRPC node
   (the SDK resolver is the fallback). The browser never talks to a node
   directly; all chain reads, fee estimation, transaction preparation, and
   broadcast happen server-side.
+- The 1% on-chain game fee: `GAME_FEE_PUBLIC_KEY` (required) is the
+  64-hex-char x-only public key of the game wallet that receives `2F` (2% of
+  the displayed stake) when a game settles with a winner (second reveal or
+  fallback claim). Each player escrows displayed stake plus 1%; refunds and
+  no-reveal flows return the exact escrow, so the fee is only ever created as
+  a separate winner-funded output, never deducted from a player's stake.
+  The process refuses to start without this variable.
 - Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
   `/var/lib/kaspa-even-odd` stores non-secret backend game metadata. It is
   `ReadWriteOnce` and only ever mounted by a single replica; the Deployment uses

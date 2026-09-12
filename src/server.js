@@ -4,7 +4,7 @@ import { extname, join, normalize } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { BackendGameService } from './backend-game-service.js';
 import { BackendGameStore } from './backend-game-store.js';
-import { NETWORK, PROTOCOL_VERSION, ProtocolError } from './protocol.js';
+import { NETWORK, PROTOCOL_VERSION, ProtocolError, validateGameFeePublicKey } from './protocol.js';
 import { WrpcClient } from './wrpc-client.js';
 import { Metrics, withRpcMetrics } from './metrics.js';
 import { RelayStore } from './relay-store.js';
@@ -14,6 +14,7 @@ import { logger } from './logger.js';
 const port = Number.parseInt(process.env.PORT ?? '3000', 10);
 const metricsPort = Number.parseInt(process.env.METRICS_PORT ?? '9464', 10);
 const configuredNetwork = process.env.KASPA_NETWORK ?? NETWORK;
+const gameFeePublicKey = validateGameFeePublicKey(process.env.GAME_FEE_PUBLIC_KEY);
 const maxRequestBytes = Number.parseInt(process.env.MAX_REQUEST_BYTES ?? '1000000', 10);
 const rateLimitPerMinute = Number.parseInt(process.env.RATE_LIMIT_PER_MINUTE ?? '300', 10);
 const trustedProxy = process.env.TRUST_PROXY === 'true';
@@ -54,7 +55,7 @@ metrics.setProductInfo(PROTOCOL_VERSION);
 const chainClient = new WrpcClient({ network: configuredNetwork });
 const rpc = withRpcMetrics(chainClient, metrics);
 const store = new BackendGameStore(process.env.GAME_STORE_PATH ?? '.data/games.json', { metrics });
-const gameService = new BackendGameService({ rpc, store, metrics });
+const gameService = new BackendGameService({ rpc, store, metrics, gameFeePublicKey });
 
 // Optional, untrusted relay: clients publish non-secret game state here so the
 // opponent can discover it. Every payload is re-verified on-chain by the
@@ -333,6 +334,7 @@ logger.info('server_started', {
   port,
   metricsPort,
   network: configuredNetwork,
+  gameFeePublicKey,
   storePath: process.env.GAME_STORE_PATH ?? '.data/games.json',
   logLevel: logger.level,
   pid: process.pid,

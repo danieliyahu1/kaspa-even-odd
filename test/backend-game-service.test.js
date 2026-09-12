@@ -12,10 +12,16 @@ const NO_UTXO_RPC = {
   getFeeEstimate: async () => ({ estimate: { priorityBucket: [{ feerate: 1 }] } }),
 };
 
+const GAME_FEE_PUBLIC_KEY = '11'.repeat(32);
+
+function serviceOptions(store) {
+  return { rpc: {}, store, gameFeePublicKey: GAME_FEE_PUBLIC_KEY };
+}
+
 test('matchmaking pairs wallets and assigns each a role and side', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const service = new BackendGameService({ rpc: {}, store: new BackendGameStore(join(directory, 'games.json')) });
+  const service = new BackendGameService(serviceOptions(new BackendGameStore(join(directory, 'games.json'))));
   const first = await service.joinMatchmaking({ address: 'kaspatest:first', publicKey: 'a'.repeat(64) });
   assert.equal(first.status, 'waiting');
   assert.equal(first.role, null);
@@ -34,7 +40,7 @@ test('matchmaking pairs wallets and assigns each a role and side', async (t) => 
 test('only the match creator may start the game, with the assigned side', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const service = new BackendGameService({ rpc: NO_UTXO_RPC, store: new BackendGameStore(join(directory, 'games.json')) });
+  const service = new BackendGameService({ rpc: NO_UTXO_RPC, store: new BackendGameStore(join(directory, 'games.json')), gameFeePublicKey: GAME_FEE_PUBLIC_KEY });
   const first = await service.joinMatchmaking({ address: 'kaspatest:first', publicKey: 'a'.repeat(64) });
   await service.joinMatchmaking({ address: 'kaspatest:second', publicKey: 'b'.repeat(64) });
   const { creatorAddress, joinerAddress, creatorPublicKey, creatorView } = await matchRoles(service, first.matchId);
@@ -51,7 +57,7 @@ test('only the match creator may start the game, with the assigned side', async 
 test('submitting an unknown creation preparation is rejected', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const service = new BackendGameService({ rpc: {}, store: new BackendGameStore(join(directory, 'games.json')) });
+  const service = new BackendGameService(serviceOptions(new BackendGameStore(join(directory, 'games.json'))));
   await assert.rejects(
     service.submitCreation({ preparedHash: 'ab'.repeat(32), signedTxJson: '{}', matchId: null }),
     { code: 'PREPARATION_NOT_FOUND' },
@@ -61,7 +67,7 @@ test('submitting an unknown creation preparation is rejected', async (t) => {
 test('join, reveal, and read require an existing game', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  const service = new BackendGameService({ rpc: {}, store: new BackendGameStore(join(directory, 'games.json')) });
+  const service = new BackendGameService(serviceOptions(new BackendGameStore(join(directory, 'games.json'))));
   const gameId = 'f'.repeat(64);
   await assert.rejects(
     service.prepareJoin(gameId, { joinerAddress: 'kaspatest:x', joinerPublicKey: 'a'.repeat(64), joinerCommitment: 'b'.repeat(64) }),
@@ -82,10 +88,11 @@ test('network status is served without touching the node or exposing a browser w
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const rpc = { getBlockDagInfo: async () => { throw new Error('networkStatus must not query the node'); } };
-  const service = new BackendGameService({ rpc, store: new BackendGameStore(join(directory, 'games.json')) });
+  const service = new BackendGameService({ rpc, store: new BackendGameStore(join(directory, 'games.json')), gameFeePublicKey: GAME_FEE_PUBLIC_KEY });
   const status = await service.networkStatus();
   assert.equal(status.network, 'testnet-10');
-  assert.equal(status.protocolVersion, 'EO/v2');
+  assert.equal(status.protocolVersion, 'EO/v3');
+  assert.equal(status.gameFeePublicKey, GAME_FEE_PUBLIC_KEY);
   assert.equal(status.wrpcUrl, undefined);
 });
 

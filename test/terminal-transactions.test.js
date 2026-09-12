@@ -39,7 +39,7 @@ const revealGame = {
 const gameInput = {
   transactionId: '11'.repeat(32),
   index: 0,
-  amount: 200_000_000n,
+  amount: 202_000_000n,
   scriptPublicKey: '0000aa20' + '00'.repeat(32) + '87',
   blockDaaScore: 1n,
 };
@@ -50,6 +50,9 @@ const feeInput = {
   amount: 1_000_000n,
   scriptPublicKey: '000051',
 };
+
+const gameWalletPublicKey = '22'.repeat(32);
+const gameFeeScriptPublicKey = '000053';
 
 test('encodes KCC arguments and dispatch tag from the pinned artifact', () => {
   const script = buildKccEntrySignatureScript({
@@ -71,15 +74,19 @@ test('prepares and serializes an authorized fallback claim transaction', () => {
     feeSompi: 1_000n,
     change: { value: 999_000n, scriptPublicKey: '000051' },
     publicKey: new Uint8Array(32).fill(7),
+    walletPublicKey: gameWalletPublicKey,
+    feeScriptPublicKey: gameFeeScriptPublicKey,
   });
   const transaction = JSON.parse(serializeTerminalTransaction(prepared));
   assert.equal(transaction.inputs[0].sequence, '3000');
   assert.equal(transaction.outputs[0].value, '200000000');
-  assert.equal(transaction.outputs[1].value, '999000');
-  assert.match(transaction.inputs[0].signatureScript, /786ae157$/);
+  assert.equal(transaction.outputs[1].value, '2000000');
+  assert.equal(transaction.outputs[1].scriptPublicKey, gameFeeScriptPublicKey);
+  assert.equal(transaction.outputs[2].value, '999000');
+  assert.match(transaction.inputs[0].signatureScript, /e8bae487$/);
 });
 
-test('prepares an individual refund for only the caller stake', () => {
+test('prepares an individual refund for only the caller escrow and fee', () => {
   const prepared = prepareIndividualRefundTransaction({
     game,
     caller: 'joiner',
@@ -95,10 +102,10 @@ test('prepares an individual refund for only the caller stake', () => {
   });
   const transaction = JSON.parse(serializeTerminalTransaction(prepared));
   assert.equal(transaction.inputs[0].sequence, '3000');
-  assert.equal(transaction.outputs[0].value, '100000000');
+  assert.equal(transaction.outputs[0].value, '101000000');
   assert.equal(transaction.outputs[0].scriptPublicKey, '000052');
   assert.deepEqual(transaction.outputs[1], {
-    value: '100000000',
+    value: '101000000',
     scriptPublicKey: gameInput.scriptPublicKey,
     covenant: { authorizingInput: 0, covenantId: '33'.repeat(32) },
   });
@@ -118,11 +125,12 @@ test('prepares first reveal as covenant continuation and second reveal as winner
     feeInputs: [feeInput],
     change: { value: 999_000n, scriptPublicKey: '000051' },
     publicKey: new Uint8Array(32).fill(7),
+    walletPublicKey: gameWalletPublicKey,
   });
   const firstTx = JSON.parse(serializeTerminalTransaction(first));
-  assert.equal(firstTx.outputs[0].value, '200000000');
+  assert.equal(firstTx.outputs[0].value, '202000000');
   assert.equal(firstTx.outputs[0].covenant.covenantId, '33'.repeat(32));
-  assert.match(firstTx.inputs[0].signatureScript, /be6bd383$/);
+  assert.match(firstTx.inputs[0].signatureScript, /6b547798$/);
   assert.equal(validateRevealTemplate({ game: revealGame, caller: 'creator', currentDaaScore: 1_001n, secret: creatorSecret, transaction: firstTx }), firstTx);
 
   const secondGame = { ...revealGame, firstReveal: { player: 'creator', confirmedDaaScore: 2_000n }, reveals: { creator: true }, creatorChoice: 1, creatorEven: true };
@@ -137,20 +145,24 @@ test('prepares first reveal as covenant continuation and second reveal as winner
     feeInputs: [feeInput],
     change: { value: 999_000n, scriptPublicKey: '000052' },
     publicKey: new Uint8Array(32).fill(8),
+    walletPublicKey: gameWalletPublicKey,
+    feeScriptPublicKey: gameFeeScriptPublicKey,
   });
   const secondTx = JSON.parse(serializeTerminalTransaction(second));
-  assert.equal(secondTx.outputs[1].value, '200000000');
-  assert.equal(secondTx.outputs[1].scriptPublicKey, '000052');
+  assert.equal(secondTx.outputs[0].value, '200000000');
+  assert.equal(secondTx.outputs[0].scriptPublicKey, '000052');
+  assert.equal(secondTx.outputs[1].value, '2000000');
+  assert.equal(secondTx.outputs[1].scriptPublicKey, gameFeeScriptPublicKey);
   assert.equal(validateRevealTemplate({ game: secondGame, caller: 'joiner', currentDaaScore: 2_010n, secret: joinerSecret, transaction: secondTx }), secondTx);
 });
 
 test('prepares an unmatched creator refund with lock time and ordinary payout', () => {
   const prepared = prepareTerminalTransaction({
     action: 'refund',
-    gameInput: { ...gameInput, amount: 100_000_000n },
+    gameInput: { ...gameInput, amount: 101_000_000n },
     lockTime: 5_000n,
     args: [new Uint8Array(32).fill(7)],
-    payoutValue: 100_000_000n,
+    payoutValue: 101_000_000n,
     recipientScriptPublicKey: '000051',
     feeInputs: [feeInput],
     feeSompi: 1_000n,
@@ -159,7 +171,7 @@ test('prepares an unmatched creator refund with lock time and ordinary payout', 
   const transaction = JSON.parse(serializeTerminalTransaction(prepared));
   assert.equal(transaction.lockTime, '5000');
   assert.equal(transaction.outputs[0].covenant, null);
-  assert.equal(transaction.outputs[0].value, '100000000');
+  assert.equal(transaction.outputs[0].value, '101000000');
 });
 
 test('refuses terminal transaction preparation when chain state is not eligible', () => {

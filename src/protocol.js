@@ -1,8 +1,13 @@
-export const PROTOCOL_VERSION = 'EO/v2';
+export const PROTOCOL_VERSION = 'EO/v3';
 export const NETWORK = 'testnet-10';
 export const MIN_STAKE_KAS = 1;
 export const MAX_STAKE_KAS = 100;
 export const SOMPI_PER_KAS = 100_000_000n;
+// Protocol v3: each player escrows a 1% game fee alongside their displayed
+// stake. The fee is only charged when a winner exists (second reveal or fallback
+// claim); canceled/no-reveal games refund the full escrow.
+export const GAME_FEE_DENOMINATOR = 100n;
+export const GAME_FEE_NUMERATOR = 1n;
 
 export class ProtocolError extends Error {
   constructor(code, message) {
@@ -12,11 +17,53 @@ export class ProtocolError extends Error {
   }
 }
 
+function assertStakeSompi(value, name = 'stake sompi') {
+  if (typeof value !== 'bigint' || value <= 0n) {
+    throw new ProtocolError('INVALID_STAKE', `${name} must be a positive bigint`);
+  }
+  return value;
+}
+
 export function stakeToSompi(stakeKas) {
   if (!Number.isInteger(stakeKas) || stakeKas < MIN_STAKE_KAS || stakeKas > MAX_STAKE_KAS) {
     throw new ProtocolError('INVALID_STAKE', `Stake must be an integer from ${MIN_STAKE_KAS} to ${MAX_STAKE_KAS} KAS`);
   }
   return BigInt(stakeKas) * SOMPI_PER_KAS;
+}
+
+// Per-player game fee: 1% of the displayed stake.
+export function gameFeeSompi(stakeSompi) {
+  return assertStakeSompi(stakeSompi) * GAME_FEE_NUMERATOR / GAME_FEE_DENOMINATOR;
+}
+
+// Per-player escrow lock: displayed stake plus its 1% fee reserve.
+export function escrowSompi(stakeSompi) {
+  return assertStakeSompi(stakeSompi) + gameFeeSompi(stakeSompi);
+}
+
+// Joined covenant deposit: both players' escrows.
+export function joinedEscrowSompi(stakeSompi) {
+  return escrowSompi(stakeSompi) * 2n;
+}
+
+// Winner payout: two displayed stakes (the pot).
+export function winnerPayoutSompi(stakeSompi) {
+  return assertStakeSompi(stakeSompi) * 2n;
+}
+
+// Game fee paid to the configured wallet when the game settles.
+export function potFeeSompi(stakeSompi) {
+  return gameFeeSompi(stakeSompi) * 2n;
+}
+
+export function validateGameFeePublicKey(value, name = 'game fee public key') {
+  if (typeof value !== 'string' || !/^[0-9a-f]+$/i.test(value)) {
+    throw new ProtocolError('INVALID_GAME_FEE', `${name} must be a hexadecimal x-only public key`);
+  }
+  const normalized = value.toLowerCase();
+  if (normalized.length === 64) return normalized;
+  if (normalized.length === 66 && /^(02|03)/.test(normalized)) return normalized.slice(2);
+  throw new ProtocolError('INVALID_GAME_FEE', `${name} must be a 32-byte x-only or compressed public key`);
 }
 
 export function validateSide(side) {

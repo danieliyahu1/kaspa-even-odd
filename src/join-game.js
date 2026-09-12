@@ -13,7 +13,7 @@ export function prepareJoinGame({ invite, expectedOrigin, network = NETWORK, joi
 export async function prepareJoin({ request, chain }) {
   assertChain(chain, ['readGameState', 'prepareJoin']);
   const game = await readJoinableGame(chain, request);
-  if (BigInt(game.potSompi) !== request.stakeSompi) throw new ProtocolError('STAKE_MISMATCH', JOIN_COPY.wrongStake);
+  if (BigInt(game.stakeSompi ?? game.potSompi) !== request.stakeSompi) throw new ProtocolError('STAKE_MISMATCH', JOIN_COPY.wrongStake);
   const prepared = await chain.prepareJoin({ request, game });
   if (!prepared || typeof prepared.txJson !== 'string' || typeof prepared.preparedHash !== 'string') throw new ProtocolError('INVALID_TRANSACTION', 'Chain returned no prepared join transaction');
   return Object.freeze({ game, prepared });

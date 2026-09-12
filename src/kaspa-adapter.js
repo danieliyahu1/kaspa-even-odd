@@ -16,10 +16,10 @@ export async function readAddressUtxos({ rpc, addresses }) {
 }
 
 export class KaspaCreationConfirmer {
-  constructor({ rpc, covenantAddress, stakeSompi, scriptPublicKey, outputIndex = 0, confirmationDepth = 1n, attempts = 30, intervalMs = 2_000, wait = defaultWait }) {
+  constructor({ rpc, covenantAddress, escrowSompi, scriptPublicKey, outputIndex = 0, confirmationDepth = 1n, attempts = 30, intervalMs = 2_000, wait = defaultWait }) {
     this.rpc = rpc;
     this.covenantAddress = covenantAddress;
-    this.stakeSompi = stakeSompi;
+    this.escrowSompi = escrowSompi;
     this.scriptPublicKey = scriptPublicKey;
     this.outputIndex = outputIndex;
     this.confirmationDepth = BigInt(confirmationDepth);
@@ -42,7 +42,7 @@ export class KaspaCreationConfirmer {
         const script = candidate.scriptPublicKey?.script ?? candidate.scriptPublicKey;
         return id === transactionId
           && index === this.outputIndex
-          && BigInt(candidate.amount) === this.stakeSompi
+          && BigInt(candidate.amount) === this.escrowSompi
           && (!this.scriptPublicKey || script === this.scriptPublicKey);
       });
       if (entry && virtualDaaScore >= BigInt(entry.blockDaaScore) + this.confirmationDepth) {

@@ -6,7 +6,8 @@
 // checks that the prepared transaction locks the exact expected covenant
 // output. A mismatched commitment, side, stake, or covenant binding is refused
 // here, so a compromised server cannot substitute a different game.
-import { deriveGameInstance, parseTemplateArtifact, verifyTemplateHash, bytesToHex } from '/src/covenant/even-odd-core.mjs';
+import { deriveGameInstance, parseTemplateArtifact, verifyTemplateHash, bytesToHex, hexToBytes } from '/src/covenant/even-odd-core.mjs';
+import { blake2b256 } from '/src/hashes/blake2b.mjs';
 import { createGenesisGameOutput } from '/src/genesis-transaction.js';
 
 const SOMPI_PER_KAS = 100_000_000n;
@@ -25,21 +26,23 @@ export async function loadCovenantTemplate() {
   return templatePromise;
 }
 
-export async function deriveCovenant({ creatorPublicKey, creatorCommitment, side, stakeSompi, deadlineDaa }) {
+export async function deriveCovenant({ creatorPublicKey, creatorCommitment, side, stakeSompi, deadlineDaa, gameFeePublicKey }) {
   const template = await loadCovenantTemplate();
   verifyTemplateHash(template);
+  const gameWalletHash = bytesToHex(blake2b256(hexToBytes(gameFeePublicKey))).toLowerCase();
   return deriveGameInstance({
     creatorPubkey: creatorPublicKey,
     creatorCommit: creatorCommitment,
-    potSompi: stakeSompi,
+    stakeSompi,
     deadlineDaa,
     creatorEven: side === 'even',
+    gameWalletHash,
   }, { template });
 }
 
-export async function verifyCreation({ txJson, creatorPublicKey, creatorCommitment, side, stakeKas, deadlineDaa }) {
+export async function verifyCreation({ txJson, creatorPublicKey, creatorCommitment, side, stakeKas, deadlineDaa, gameFeePublicKey }) {
   const stakeSompi = BigInt(stakeKas) * SOMPI_PER_KAS;
-  const instance = await deriveCovenant({ creatorPublicKey, creatorCommitment, side, stakeSompi, deadlineDaa: BigInt(deadlineDaa) });
+  const instance = await deriveCovenant({ creatorPublicKey, creatorCommitment, side, stakeSompi, deadlineDaa: BigInt(deadlineDaa), gameFeePublicKey });
 
   let transaction;
   try {

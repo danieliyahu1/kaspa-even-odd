@@ -110,7 +110,7 @@ function renderMatchmaking() {
           <div class="sum-item"><small>Pot</small><strong>${escapeHtml(match.stakeKas * 2)} KAS</strong></div>
         </div>
         <div id="match-number-notice"></div>
-        <div class="actions"><button type="button" class="primary" id="match-play" disabled>Play for ${escapeHtml(match.stakeKas)} KAS</button></div>`;
+        <div class="actions"><button type="button" class="primary" id="match-play" disabled>Play for ${escapeHtml(escrowKas(match.stakeKas))} KAS</button></div>`;
       document.querySelectorAll('[data-match-number]').forEach((button) => button.addEventListener('click', () => {
         number = Number(button.dataset.matchNumber);
         document.querySelectorAll('[data-match-number]').forEach((item) => {
@@ -178,8 +178,8 @@ function renderMatchmaking() {
         stakeKas: 1,
         matchId: match.matchId,
       } });
-      await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side: match.side, stakeKas: 1, deadlineDaa: prepared.deadlineDaa });
-      showNotice('#matchmaking-content', 'Confirm in KasWare', `Approve the ${match.stakeKas} KAS transaction.`, '');
+      await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side: match.side, stakeKas: 1, deadlineDaa: prepared.deadlineDaa, gameFeePublicKey: await gameFeePublicKey() });
+      showNotice('#matchmaking-content', 'Confirm in KasWare', `Approve ${escrowKas(match.stakeKas)} KAS (stake + 1% game fee).`, '');
       const signedTxJson = await signWithKasware(provider, prepared.txJson);
       if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       const game = await api('/api/games/submit', { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson, matchId: match.matchId } });
@@ -202,7 +202,7 @@ function renderMatchmaking() {
         joinerCommitment: secret.commitment,
         matchId: match.matchId,
       } });
-      showNotice('#matchmaking-content', 'Confirm in KasWare', `Approve the ${match.stakeKas} KAS transaction.`, '');
+      showNotice('#matchmaking-content', 'Confirm in KasWare', `Approve ${escrowKas(match.stakeKas)} KAS (stake + 1% game fee).`, '');
       const signedTxJson = await signWithKasware(provider, prepared.txJson);
       if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       await api(`/api/games/${match.gameId}/join/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
@@ -333,8 +333,8 @@ function renderCreate() {
         side,
         stakeKas: stake,
       } });
-      await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side, stakeKas: stake, deadlineDaa: prepared.deadlineDaa });
-      showNotice('#create-notice', 'Confirm in KasWare', `Approve the ${stake} KAS transaction. Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
+      await verifyCreation({ txJson: prepared.txJson, creatorPublicKey: account.publicKey, creatorCommitment: secret.commitment, side, stakeKas: stake, deadlineDaa: prepared.deadlineDaa, gameFeePublicKey: await gameFeePublicKey() });
+      showNotice('#create-notice', 'Confirm in KasWare', `Approve ${escrowKas(stake)} KAS (stake + 1% game fee). Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
       const signedTxJson = await signWithKasware(provider, prepared.txJson);
       if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       const game = await api('/api/games/submit', { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
@@ -432,6 +432,7 @@ function gameDetails(game) {
   return `
     <div class="summary">
       <div class="sum-item"><small>Stake</small><strong>${escapeHtml(amount)} KAS</strong></div>
+      <div class="sum-item"><small>Escrow</small><strong>${escapeHtml(escrowKas(amount))} KAS</strong></div>
       <div class="sum-item"><small>Pot</small><strong>${escapeHtml(pot)} KAS</strong></div>
     </div>`;
 }
@@ -450,11 +451,11 @@ function joinSection(game, yourSide) {
             <button type="button" class="choice num" data-join-number="0" aria-pressed="false"><span class="num-big">2</span><small class="num-tag">Even</small></button>
           </div>
         </fieldset>
-        <p class="fate">Stake ${escapeHtml(theirStake)} KAS. Winner takes ${escapeHtml(theirStake * 2)} KAS.</p>
+        <p class="fate">Stake ${escapeHtml(theirStake)} KAS, plus a 1% game fee (${escapeHtml(escrowKas(theirStake))} KAS in total). Winner takes ${escapeHtml(theirStake * 2)} KAS.</p>
         <div id="join-notice"></div>
         <p class="muted-note">Your number is saved only in this browser. Clearing site data before you reveal forfeits your stake.</p>
         <div class="actions">
-          <button type="submit" class="primary" id="join-submit" disabled>Join for ${escapeHtml(theirStake)} KAS</button>
+          <button type="submit" class="primary" id="join-submit" disabled>Join for ${escapeHtml(escrowKas(theirStake))} KAS</button>
         </div>
       </form>
     </div>`;
@@ -491,7 +492,7 @@ async function bindJoin(gameId, game) {
         joinerPublicKey: account.publicKey,
         joinerCommitment: secret.commitment,
       } });
-      showNotice('#join-notice', 'Confirm in KasWare', `Match ${theirStake} KAS. Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
+      showNotice('#join-notice', 'Confirm in KasWare', `Match ${escrowKas(theirStake)} KAS (stake + 1% game fee). Network fee: ${formatKas(prepared.feeSompi)} KAS.`, '');
       const signedTxJson = await signWithKasware(provider, prepared.txJson);
       if (!signedTxJson) throw new Error('KasWare did not return a signed transaction');
       await api(`/api/games/${gameId}/join/submit`, { method: 'POST', body: { preparedHash: prepared.preparedHash, signedTxJson } });
@@ -950,3 +951,9 @@ function showNotice(selector, title, message, kind) {
 function isGameId(value) { return /^[0-9a-f]{64}$/i.test(value ?? ''); }
 function formatKas(sompi) { return (Number(sompi) / 100_000_000).toFixed(8).replace(/0+$/, '').replace(/\.$/, ''); }
 function escapeHtml(value) { return String(value).replace(/[&<>'"]/g, (character) => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', "'":'&#39;', '"':'&quot;' })[character]); }
+function escrowKas(stakeKas) { return Number(stakeKas) + Number(stakeKas) / 100; }
+let cachedConfig = null;
+async function gameFeePublicKey() {
+  if (!cachedConfig) cachedConfig = await api('/api/config');
+  return cachedConfig.gameFeePublicKey;
+}

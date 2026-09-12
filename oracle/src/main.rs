@@ -11,7 +11,7 @@ use kaspa_consensus_core::tx::{ScriptPublicKey, TransactionId, TransactionOutpoi
 use silverscript_abi::{ArtifactValue, SilAbiArtifact, encode_runtime_state_script};
 
 fn usage() -> ! {
-    eprintln!("usage: covenant-oracle <artifact.json> <creator_pubkey_hex(64)> <creator_commit_hex(64)> <pot_sompi> <deadline_daa>");
+    eprintln!("usage: covenant-oracle <artifact.json> <creator_pubkey_hex(64)> <creator_commit_hex(64)> <stake_sompi> <deadline_daa> <wallet_pubkey_hex(64)>");
     std::process::exit(2);
 }
 
@@ -42,12 +42,19 @@ fn main() -> ExitCode {
         },
         None => usage(),
     };
-    let pot_sompi: i64 = match args.next() {
+    let stake_sompi: i64 = match args.next() {
         Some(v) => v.parse().unwrap_or_else(|_| usage()),
         None => usage(),
     };
     let deadline_daa: i64 = match args.next() {
         Some(v) => v.parse().unwrap_or_else(|_| usage()),
+        None => usage(),
+    };
+    let wallet_pubkey = match args.next() {
+        Some(h) => match decode_hex(&h) {
+            Ok(b) if b.len() == 32 => b,
+            _ => usage(),
+        },
         None => usage(),
     };
 
@@ -80,17 +87,19 @@ fn main() -> ExitCode {
     };
 
     let creator_hash = blake2b256(&creator_pk);
+    let game_wallet_hash = blake2b256(&wallet_pubkey);
     let mut values = BTreeMap::new();
     values.insert("creator_hash".into(), ArtifactValue::Bytes(creator_hash.to_vec()));
     values.insert("joiner_hash".into(), ArtifactValue::Bytes(vec![0u8; 32]));
     values.insert("creator_commit".into(), ArtifactValue::Bytes(creator_commit.clone()));
     values.insert("joiner_commit".into(), ArtifactValue::Bytes(vec![0u8; 32]));
-    values.insert("pot".into(), ArtifactValue::Int(pot_sompi));
+    values.insert("stake".into(), ArtifactValue::Int(stake_sompi));
     values.insert("deadline_daa".into(), ArtifactValue::Int(deadline_daa));
     values.insert("creator_even".into(), ArtifactValue::Int(0));
     values.insert("creator_choice".into(), ArtifactValue::Int(0));
     values.insert("joiner_choice".into(), ArtifactValue::Int(0));
     values.insert("first_revealer_hash".into(), ArtifactValue::Bytes(vec![0u8; 32]));
+    values.insert("game_wallet_hash".into(), ArtifactValue::Bytes(game_wallet_hash.to_vec()));
     values.insert("status".into(), ArtifactValue::Int(0));
 
     let state_script = match encode_runtime_state_script(&abi, &contract.runtime_state, &values) {
@@ -132,8 +141,11 @@ fn main() -> ExitCode {
     println!("template_hash={}", faster_hex::hex_string(&contract.compiled.template_hash));
 
     let genesis_outpoint = TransactionOutpoint { transaction_id: TransactionId::from_bytes([0x11; 32]), index: 2 };
+    // Each player escrows the displayed stake plus a 1% game fee; the oracle
+    // mirrors the JS genesis covenant by committing the full escrow.
+    let escrow_sompi = (stake_sompi as u64) + (stake_sompi as u64) / 100;
     let genesis_output = TransactionOutput {
-        value: pot_sompi as u64,
+        value: escrow_sompi,
         script_public_key: ScriptPublicKey::new(0, spk.into()),
         covenant: None,
     };

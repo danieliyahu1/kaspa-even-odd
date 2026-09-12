@@ -30,7 +30,7 @@ const request = {
   caller: 'creator',
   currentDaaScore: 4_000n,
   recipientScriptPublicKey: '000051',
-  gameInput: { transactionId: '11'.repeat(32), index: 0, amount: 200_000_000n, scriptPublicKey: '0000aa20' + '00'.repeat(32) + '87', blockDaaScore: 1n },
+  gameInput: { transactionId: '11'.repeat(32), index: 0, amount: 202_000_000n, scriptPublicKey: '0000aa20' + '00'.repeat(32) + '87', blockDaaScore: 1n },
   feeInputs: [{ transactionId: '22'.repeat(32), index: 0, amount: 1_000_000n, scriptPublicKey: '000051' }],
   feeSompi: 1_000n,
   continuationScriptPublicKey: '0000aa20' + '11'.repeat(32) + '87',
@@ -83,6 +83,8 @@ test('runs a normal second reveal through mocked wallet and chain settlement', a
     recipientScriptPublicKey: '000051',
     publicKey: new Uint8Array(32).fill(8),
     payoutPublicKey: new Uint8Array(32).fill(7),
+    walletPublicKey: '22'.repeat(32),
+    feeScriptPublicKey: '000053',
     change: { value: 999_000n, scriptPublicKey: '000052' },
   };
   const base = prepareRevealTransaction({ ...revealRequest, game: revealGame });

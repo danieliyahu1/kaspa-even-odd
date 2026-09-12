@@ -118,8 +118,8 @@ function buildStateScript(game) {
   const creatorCommit = normalizeBytes(game.creatorCommit, 32, 'creatorCommit');
   const joinerPubkey = game.joinerPubkey === undefined ? null : normalizeBytes(game.joinerPubkey, 32, 'joinerPubkey');
   const joinerCommit = game.joinerCommit === undefined ? ZERO32 : normalizeBytes(game.joinerCommit, 32, 'joinerCommit');
-  if (typeof game.potSompi !== 'bigint' || game.potSompi <= 0n) {
-    throw new ProtocolError('INVALID_STATE', 'potSompi must be a positive bigint');
+  if (typeof game.stakeSompi !== 'bigint' || game.stakeSompi <= 0n) {
+    throw new ProtocolError('INVALID_STATE', 'stakeSompi must be a positive bigint');
   }
   if (typeof game.deadlineDaa !== 'bigint' || game.deadlineDaa <= 0n) {
     throw new ProtocolError('INVALID_STATE', 'deadlineDaa must be a positive bigint');
@@ -129,17 +129,19 @@ function buildStateScript(game) {
   const creatorChoice = BigInt(game.creatorChoice ?? 0);
   const joinerChoice = BigInt(game.joinerChoice ?? 0);
   const firstRevealerHash = game.firstRevealerHash === undefined ? ZERO32 : normalizeBytes(game.firstRevealerHash, 32, 'firstRevealerHash');
+  const gameWalletHash = game.gameWalletHash === undefined ? ZERO32 : normalizeBytes(game.gameWalletHash, 32, 'gameWalletHash');
   const parts = [
     pushData(creatorHash),      // creator_hash
     pushData(joinerPubkey ? blake2b256(joinerPubkey) : ZERO32),
     pushData(creatorCommit),    // creator_commit
     pushData(joinerCommit),
-    pushData(encodeI64Fixed(game.potSompi)),       // pot
-    pushData(encodeI64Fixed(game.deadlineDaa)),    // deadline_daa
+    pushData(encodeI64Fixed(game.stakeSompi)),        // stake
+    pushData(encodeI64Fixed(game.deadlineDaa)),       // deadline_daa
     pushData(encodeI64Fixed(game.creatorEven ? 1n : 0n)), // creator_even
     pushData(encodeI64Fixed(creatorChoice)),
     pushData(encodeI64Fixed(joinerChoice)),
     pushData(firstRevealerHash),
+    pushData(gameWalletHash),   // game_wallet_hash
     pushData(encodeI64Fixed(status)),
   ];
   const total = parts.reduce((n, p) => n + p.length, 0);

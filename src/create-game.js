@@ -1,13 +1,17 @@
 import {
   NETWORK,
+  PROTOCOL_VERSION,
   ProtocolError,
   stakeToSompi,
   validateFeeSeparation,
+  validateGameFeePublicKey,
   validateNetwork,
   validateSide,
 } from './protocol.js';
 import { serializeInvite } from './invite.js';
 import { deriveGameInstance, EVEN_ODD_TEMPLATE } from './covenant/even-odd.mjs';
+import { blake2b256 } from './hashes/blake2b.mjs';
+import { bytesToHex, hexToBytes } from './hashes/hex.mjs';
 import { validateCreationTransaction, verifySignedCreationSafeJson } from './genesis-transaction.js';
 
 const ACTION = 'create';
@@ -22,6 +26,7 @@ export function prepareCreateGame({
   side,
   stakeKas,
   feeSompi,
+  gameFeePublicKey,
 }) {
   validateNetwork(network);
   validateSide(side);
@@ -30,21 +35,26 @@ export function prepareCreateGame({
   const publicKey = normalizePublicKey(creatorPublicKey, 'creator public key');
   const commitment = normalizeHex(creatorCommitment, 32, 'creator commitment');
   const deadline = normalizePositiveBigInt(deadlineDaa, 'deadline DAA score');
+  const feePublicKey = normalizePublicKey(validateGameFeePublicKey(gameFeePublicKey), 'game fee public key');
+  const gameWalletHash = bytesToHex(blake2b256(hexToBytes(feePublicKey))).toLowerCase();
     const covenant = deriveGameInstance({
     creatorPubkey: publicKey,
     creatorCommit: commitment,
-    potSompi: stakeSompi,
+    stakeSompi,
      deadlineDaa: deadline,
      creatorEven: side === 'even',
+    gameWalletHash,
   });
   return Object.freeze({
-    protocolVersion: 'EO/v2',
+    protocolVersion: PROTOCOL_VERSION,
     network: NETWORK,
     creatorAddress,
     side,
     creatorEven: side === 'even',
     stakeSompi,
     feeSompi,
+    gameFeePublicKey: feePublicKey,
+    gameWalletHash,
     creatorPublicKey: publicKey,
     creatorCommitment: commitment,
     deadlineDaa: deadline,

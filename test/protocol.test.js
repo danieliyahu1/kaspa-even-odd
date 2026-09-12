@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseInvite, serializeInvite } from '../src/invite.js';
 import { MemoryGameStore, prepareCreateGame } from '../src/create-game.js';
-import { ProtocolError, stakeToSompi } from '../src/protocol.js';
+import { ProtocolError, stakeToSompi, escrowSompi } from '../src/protocol.js';
 import { KaspaCreationConfirmer, submitSignedTransaction } from '../src/kaspa-adapter.js';
 import { KaswareWalletAdapter, waitForKaswareProvider } from '../src/kasware-wallet.js';
 import { createGenesisGameOutput } from '../src/genesis-transaction.js';
@@ -16,6 +16,7 @@ const valid = {
   side: 'even',
   stakeKas: 1,
   feeSompi: 1000n,
+  gameFeePublicKey: '11'.repeat(32),
 };
 
 test('converts KAS to exact sompi without floating point', () => {
@@ -40,8 +41,8 @@ test('rejects wrong network and incomplete covenant state', () => {
 test('serializes and parses an invite with only version and game id', () => {
   const gameId = 'b'.repeat(64);
   const invite = serializeInvite({ gameId, origin: 'https://example.test/create' });
-  assert.equal(invite, `https://example.test/join?v=EO%2Fv2&game=${gameId}`);
-  assert.deepEqual(parseInvite(invite, 'https://example.test'), { protocolVersion: 'EO/v2', network: 'testnet-10', gameId, creation: null });
+  assert.equal(invite, `https://example.test/join?v=EO%2Fv3&game=${gameId}`);
+  assert.deepEqual(parseInvite(invite, 'https://example.test'), { protocolVersion: 'EO/v3', network: 'testnet-10', gameId, creation: null });
   assert.throws(() => parseInvite(`${invite}&secret=do-not-accept`, 'https://example.test'), { code: 'INVALID_INVITE' });
 });
 
@@ -171,11 +172,11 @@ test('confirms a creation only after its covenant UTXO has one DAA confirmation'
   let reads = 0;
   const confirmer = new KaspaCreationConfirmer({
     rpc: {
-      getUtxosByAddresses: async () => ({ entries: [{ outpoint: { transactionId: 'tx-1', index: 0 }, amount: '100000000', scriptPublicKey: { script: 'aa20' }, blockDaaScore: '50' }] }),
+      getUtxosByAddresses: async () => ({ entries: [{ outpoint: { transactionId: 'tx-1', index: 0 }, amount: '101000000', scriptPublicKey: { script: 'aa20' }, blockDaaScore: '50' }] }),
       getBlockDagInfo: async () => ({ virtualDaaScore: String(50 + reads++) }),
     },
     covenantAddress: prepareCreateGame(valid).covenantAddress,
-    stakeSompi: 100_000_000n,
+    escrowSompi: 101_000_000n,
     scriptPublicKey: 'aa20',
     attempts: 3,
     wait: async () => {},
@@ -191,7 +192,7 @@ function preparedCreationFor(request) {
   const policy = { authorizingInput: 0 };
   const input = {
     transactionId: '11'.repeat(32), index: 2, sequence: '0', sigOpCount: 0, computeBudget: 0, signatureScript: '',
-    utxo: { amount: String(request.stakeSompi + request.feeSompi), scriptPublicKey: '000051', blockDaaScore: '1', isCoinbase: false, covenantId: null },
+    utxo: { amount: String(escrowSompi(request.stakeSompi) + request.feeSompi), scriptPublicKey: '000051', blockDaaScore: '1', isCoinbase: false, covenantId: null },
   };
   const output = createOutput(request, input);
   return {

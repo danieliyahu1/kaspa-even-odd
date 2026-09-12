@@ -6,6 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { deriveGameInstance, EVEN_ODD_TEMPLATE } from '../src/covenant/even-odd.mjs';
 import { computeGenesisCovenantId } from '../src/genesis-transaction.js';
+import { blake2b256 } from '../src/hashes/blake2b.mjs';
+import { bytesToHex, hexToBytes } from '../src/hashes/hex.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ORACLE_CANDIDATES = [
@@ -17,11 +19,14 @@ const ARTIFACT = join(__dirname, '..', 'covenant', 'even_odd.template.artifact.j
 
 const creatorPubkeyHex = '07'.repeat(32);
 const creatorCommitHex = '09'.repeat(32);
-const potSompi = 100000000;
+const stakeSompi = 100000000;
 const deadlineDaa = 500000000000;
+const walletPubkeyHex = '11'.repeat(32);
+const walletHashHex = bytesToHex(blake2b256(hexToBytes(walletPubkeyHex))).toLowerCase();
+const escrowSompi = stakeSompi + Math.floor(stakeSompi / 100);
 
 function runOracle() {
-  return execFileSync(ORACLE, [ARTIFACT, creatorPubkeyHex, creatorCommitHex, String(potSompi), String(deadlineDaa)], {
+  return execFileSync(ORACLE, [ARTIFACT, creatorPubkeyHex, creatorCommitHex, String(stakeSompi), String(deadlineDaa), walletPubkeyHex], {
     encoding: 'utf8',
   });
 }
@@ -42,8 +47,9 @@ test('real Rust covenant-oracle (pinned v2.0.1) matches the JS covenant derivati
   const inst = deriveGameInstance({
     creatorPubkey: Buffer.from(creatorPubkeyHex, 'hex'),
     creatorCommit: Buffer.from(creatorCommitHex, 'hex'),
-    potSompi: BigInt(potSompi),
+    stakeSompi: BigInt(stakeSompi),
     deadlineDaa: BigInt(deadlineDaa),
+    gameWalletHash: walletHashHex,
   });
 
   assert.equal(oracle.instance_len, String(inst.redeemScript.length));
@@ -59,18 +65,19 @@ test('real Rust covenant-oracle (pinned v2.0.1) yields the WASM-authoritative ge
   const inst = deriveGameInstance({
     creatorPubkey: Buffer.from(creatorPubkeyHex, 'hex'),
     creatorCommit: Buffer.from(creatorCommitHex, 'hex'),
-    potSompi: BigInt(potSompi),
+    stakeSompi: BigInt(stakeSompi),
     deadlineDaa: BigInt(deadlineDaa),
+    gameWalletHash: walletHashHex,
   });
 
   const jsCovenantId = computeGenesisCovenantId(
     { transactionId: '11'.repeat(32), index: 2 },
-    [{ index: 0, output: { value: String(potSompi), scriptPublicKey: inst.p2shScript.toString('hex'), covenant: null } }],
+    [{ index: 0, output: { value: String(escrowSompi), scriptPublicKey: inst.p2shScript.toString('hex'), covenant: null } }],
   );
 
   // The WASM SDK's populateGenesisCovenants binds this exact vector to
   // This vector is pinned by the current covenant artifact and JS derivation.
-  assert.equal(jsCovenantId, '84bc0e4633081a7fbb2d195213d7121e49545e294b06b67c2a03c0ce62a4b1b3');
+  assert.equal(jsCovenantId, '206803cc908b732ea6fc112160ad7b9d72beb0e5eeba433355f7c331ed2ba69e');
 
   // Reference: the oracle prints its own covenant_id_vector using the
   // versioned SPK encoding; the JS/WASM reuse the SafeJSON versionless form,

@@ -50,6 +50,8 @@ spec:
               value: "testnet-10"
             - name: GAME_STORE_PATH
               value: /var/lib/kaspa-even-odd/games.json
+            - name: GAME_FEE_PUBLIC_KEY
+              value: "REPLACE_WITH_64_HEX_X_ONLY_GAME_WALLET_PUBLIC_KEY"
           volumeMounts:
             - name: game-state
               mountPath: /var/lib/kaspa-even-odd

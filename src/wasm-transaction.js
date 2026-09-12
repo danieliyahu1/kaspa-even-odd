@@ -1,6 +1,6 @@
 import { blake2b256 } from './hashes/blake2b.mjs';
 import { bytesToHex } from './hashes/hex.mjs';
-import { ProtocolError } from './protocol.js';
+import { escrowSompi, ProtocolError } from './protocol.js';
 import { DEFAULT_RELAY_FLOOR_RATE } from './fee-policy.js';
 import { loadWasmSdk } from './wasm-loader.mjs';
 import { describeTransactionChanges } from './transaction-diagnostics.js';
@@ -40,11 +40,11 @@ export function createWasmGenesisSafeJson({ request, authorizingInput, inputs, c
     const transaction = buildWasmTransaction(wasm, authorizingIndex, normalizedInputs, outputs);
     const mass = Number(wasm.calculateTransactionMass(request.network, transaction));
     const fee = BigInt(Math.ceil(mass * rate));
-    const changeValue = inputTotal - request.stakeSompi - fee;
+    const changeValue = inputTotal - escrowSompi(request.stakeSompi) - fee;
     return { transaction, mass, fee, changeValue };
   };
 
-  const stakeOutput = () => ({ value: String(request.stakeSompi), scriptPublicKey: stakeScript });
+  const stakeOutput = () => ({ value: String(escrowSompi(request.stakeSompi)), scriptPublicKey: stakeScript });
 
   // First determine the fee with just the stake output. If the funding leaves
   // change, add a change output and reprice to a fixed point so the change the
@@ -78,9 +78,9 @@ export function createWasmGenesisSafeJson({ request, authorizingInput, inputs, c
     mass = built.mass;
   }
 
-  // Guarantee consistency: the tx change output must equal inputTotal - stake - fee.
+  // Guarantee consistency: the tx change output must equal inputTotal - escrow - fee.
   if (withChange) {
-    const expectedChange = inputTotal - request.stakeSompi - fee;
+    const expectedChange = inputTotal - escrowSompi(request.stakeSompi) - fee;
     const actualChange = BigInt(JSON.parse(finalTx.serializeToSafeJSON()).outputs[1].value);
     if (actualChange !== expectedChange) {
       throw new ProtocolError('INVALID_TRANSACTION', 'WASM change output is inconsistent with the charged fee');
@@ -93,9 +93,9 @@ export function createWasmGenesisSafeJson({ request, authorizingInput, inputs, c
     || !parsed.outputs[0]?.covenant?.covenantId) {
     throw new ProtocolError('COVENANT_BINDING_FAILED', 'WASM did not bind output zero to a genesis covenant');
   }
-  if (parsed.outputs[0].value !== String(request.stakeSompi)
+  if (parsed.outputs[0].value !== String(escrowSompi(request.stakeSompi))
     || parsed.outputs[0].scriptPublicKey !== stakeScript) {
-    throw new ProtocolError('INVALID_TRANSACTION', 'WASM output zero does not match the exact stake and versioned P2SH script');
+    throw new ProtocolError('INVALID_TRANSACTION', 'WASM output zero does not match the exact escrow and versioned P2SH script');
   }
 
   const policy = { authorizingInput: authorizingIndex };

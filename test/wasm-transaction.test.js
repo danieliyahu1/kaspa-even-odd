@@ -9,6 +9,7 @@ import { prepareCreateGame } from '../src/create-game.js';
 import { createGenesisGameOutput, computeGenesisCovenantId } from '../src/genesis-transaction.js';
 import { createWasmGenesisSafeJson, verifyWasmSignedSafeJson } from '../src/wasm-transaction.js';
 import { deriveGameInstance } from '../src/covenant/even-odd.mjs';
+import { escrowSompi } from '../src/protocol.js';
 
 const require = createRequire(import.meta.url);
 const VENDOR_DIR = fileURLToPath(new URL('../vendor/kaspa-wasm32-sdk/v2.0.1/nodejs/kaspa/', import.meta.url));
@@ -24,9 +25,10 @@ const request = prepareCreateGame({
   side: 'even',
   stakeKas: 1,
   feeSompi: 1000n,
+  gameFeePublicKey: '11'.repeat(32),
 });
 
-function fundingInput(amount = request.stakeSompi + 400_000_000n) {
+function fundingInput(amount = escrowSompi(request.stakeSompi) + 400_000_000n) {
   return {
     transactionId: '11'.repeat(32),
     index: 2,
@@ -85,9 +87,10 @@ test('WASM covenant address matches the pure-JS game instance oracle', () => {
   const instance = deriveGameInstance({
     creatorPubkey: new Array(32).fill(7),
     creatorCommit: new Array(32).fill(9),
-    potSompi: request.stakeSompi,
+    stakeSompi: request.stakeSompi,
     deadlineDaa: request.deadlineDaa,
     creatorEven: true,
+    gameWalletHash: request.gameWalletHash,
   });
   assert.equal(transaction.outputs[0].scriptPublicKey, '0000' + instance.p2shScript.toString('hex'));
 });
@@ -114,7 +117,7 @@ test('WASM verify rejects mutation of the game output or input funds', () => {
   const prepared = createWasmGenesisSafeJson({ request, authorizingInput: 0, inputs: [fundingInput()] });
 
   const lowered = JSON.parse(prepared.txJson);
-  lowered.outputs[0].value = (request.stakeSompi - 1n).toString();
+  lowered.outputs[0].value = (escrowSompi(request.stakeSompi) - 1n).toString();
   assert.throws(() => verifyWasmSignedSafeJson({ preparedTxJson: prepared.txJson, signedTxJson: JSON.stringify(lowered), policy: prepared.policy }), { code: 'SIGNED_TRANSACTION_MISMATCH' });
 
   const changedScript = JSON.parse(prepared.txJson);

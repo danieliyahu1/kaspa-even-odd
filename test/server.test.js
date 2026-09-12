@@ -15,6 +15,7 @@ test('server serves the browser application and health probe', async (t) => {
       PORT: String(port),
       METRICS_PORT: String(metricsPort),
       GAME_STORE_PATH: join(directory, 'games.json'),
+      GAME_FEE_PUBLIC_KEY: '11'.repeat(32),
       RATE_LIMIT_PER_MINUTE: '6',
       LOG_LEVEL: 'debug',
     },
@@ -73,7 +74,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.equal(wasmJs.status, 200);
   assert.equal(icon.status, 200);
   assert.match(icon.headers.get('content-type') ?? '', /image\/svg\+xml/);
-  assert.equal((await artifact.json()).contracts.EvenOdd.compiled.state_span.len, 219);
+  assert.equal((await artifact.json()).contracts.EvenOdd.compiled.state_span.len, 252);
   assert.match(await pins.json().then((p) => p.rustyKaspa.webVendoredWasmFileSha256), /^[0-9a-f]{64}$/);
 
   // The thin client talks only to this server; it never constructs or verifies

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareCreateGame } from '../src/create-game.js';
+import { escrowSompi } from '../src/protocol.js';
 import {
   computeGenesisCovenantId,
   createGenesisGameOutput,
@@ -17,12 +18,15 @@ const request = prepareCreateGame({
   side: 'even',
   stakeKas: 1,
   feeSompi: 1000n,
+  gameFeePublicKey: '11'.repeat(32),
 });
 
 test('computes the Rusty Kaspa v2.0.1 covenant-id oracle vector', () => {
+  // Mirrors the covenant-oracle: versioned SPK (version 0 + a20 <blake2b(instance)> 87),
+  // escrow value, authorizing outpoint txid=0x11*32 index 2.
   const output = {
-    value: '100000000',
-    scriptPublicKey: request.covenantScriptPublicKey,
+    value: '101000000',
+    scriptPublicKey: '0000aa2099ec99e92524c14c3e5481f2754de4cf897bbf7b22d06496e632e6163085223b87',
     covenant: null,
   };
   assert.equal(
@@ -30,42 +34,42 @@ test('computes the Rusty Kaspa v2.0.1 covenant-id oracle vector', () => {
       { transactionId: '11'.repeat(32), index: 2 },
       [{ index: 0, output }],
     ),
-    '561b76aa0567acdd7994a4895f7db23d94cd1ebaa46a4de690ed25b05910c0fb',
+    '1873c2312051048ba566dd9e6715b6540b319263691a950bac37915d5f880a79',
   );
 });
 
-test('constructs output zero with exact stake, P2SH, and genesis binding', () => {
+test('constructs output zero with exact escrow, P2SH, and genesis binding', () => {
   const output = createGenesisGameOutput({ request, authorizingInput: 0, authorizingOutpoint: input() });
   assert.deepEqual(output, {
-    value: '100000000',
-    scriptPublicKey: '0000aa20e65da8645f2caeb6764c63c384e4cef83cf8798177ff2db66fbd2845425d94c187',
+    value: '101000000',
+    scriptPublicKey: '0000aa207e7880aa040625a9d6cd256650e4b7226d8557c7879a3df8405dfcfb1b37bc1787',
     covenant: {
       authorizingInput: 0,
-      covenantId: '8102376fc02a60abd8b8c9151a666fa993a7e876d4ebc467c0c886ed15ed2368',
+      covenantId: '38bb66618f25371588b3da13bc4daa3008ed362827e037b939bde422e8f43cb8',
     },
   });
 });
 
 test('validates exact fee separation and approved change', () => {
   const changeScriptPublicKey = '000051';
-  const transaction = tx({ inputAmount: request.stakeSompi + request.feeSompi + 50n, changeValue: 50n, changeScriptPublicKey });
+  const transaction = tx({ inputAmount: escrowSompi(request.stakeSompi) + request.feeSompi + 50n, changeValue: 50n, changeScriptPublicKey });
   assert.deepEqual(validateCreationTransaction(JSON.stringify(transaction), request, { authorizingInput: 0, changeScriptPublicKey }), transaction);
 });
 
 test('rejects fee substitution, covenant fee inputs, and redirected change', () => {
-  const insufficientFee = tx({ inputAmount: request.stakeSompi + request.feeSompi - 1n });
+  const insufficientFee = tx({ inputAmount: escrowSompi(request.stakeSompi) + request.feeSompi - 1n });
   assert.throws(() => validateCreationTransaction(JSON.stringify(insufficientFee), request, { authorizingInput: 0 }), { code: 'FEE_SUBSTITUTION' });
 
-  const covenantInput = tx({ inputAmount: request.stakeSompi + request.feeSompi });
+  const covenantInput = tx({ inputAmount: escrowSompi(request.stakeSompi) + request.feeSompi });
   covenantInput.inputs[0].utxo.covenantId = '22'.repeat(32);
   assert.throws(() => validateCreationTransaction(JSON.stringify(covenantInput), request, { authorizingInput: 0 }), { code: 'INVALID_TRANSACTION' });
 
-  const redirected = tx({ inputAmount: request.stakeSompi + request.feeSompi + 50n, changeValue: 50n, changeScriptPublicKey: '000052' });
+  const redirected = tx({ inputAmount: escrowSompi(request.stakeSompi) + request.feeSompi + 50n, changeValue: 50n, changeScriptPublicKey: '000052' });
   assert.throws(() => validateCreationTransaction(JSON.stringify(redirected), request, { authorizingInput: 0, changeScriptPublicKey: '000051' }), { code: 'INVALID_TRANSACTION' });
 });
 
 test('allows only signature-script changes in wallet SafeJSON', () => {
-  const prepared = tx({ inputAmount: request.stakeSompi + request.feeSompi });
+  const prepared = tx({ inputAmount: escrowSompi(request.stakeSompi) + request.feeSompi });
   const signed = structuredClone(prepared);
   signed.inputs[0].signatureScript = '01aa';
   assert.deepEqual(verifySignedCreationSafeJson({
@@ -84,7 +88,7 @@ test('allows only signature-script changes in wallet SafeJSON', () => {
   }), { code: 'SIGNED_TRANSACTION_MISMATCH' });
 });
 
-function input(amount = request.stakeSompi + request.feeSompi) {
+function input(amount = escrowSompi(request.stakeSompi) + request.feeSompi) {
   return {
     transactionId: '11'.repeat(32),
     index: 2,

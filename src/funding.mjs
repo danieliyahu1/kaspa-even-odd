@@ -1,7 +1,7 @@
 // Isomorphic funding estimation for covenant transactions. Selects ordinary
 // (non-covenant) wallet UTXOs to cover the stake and fee, and reports the
 // change output. Used by the Node chain adapter and by the browser client.
-import { ProtocolError } from './protocol.js';
+import { ProtocolError, escrowSompi } from './protocol.js';
 import { estimateCreationFee, selectOrdinaryUtxos, CREATION_MASS_BOUND } from './fee-policy.js';
 
 export function estimateFunding({ request, entries, feerate, feeOptions }) {
@@ -9,6 +9,7 @@ export function estimateFunding({ request, entries, feerate, feeOptions }) {
   if (typeof stakeSompi !== 'bigint' || stakeSompi <= 0n) {
     throw new ProtocolError('INVALID_GAME_VALUE', 'Game stake must be positive sompi');
   }
+  const escrow = escrowSompi(stakeSompi);
   const committedFee = request.feeSompi;
   if (typeof committedFee !== 'bigint' || committedFee < 0n) {
     throw new ProtocolError('INVALID_FEE', 'Committed fee must be non-negative sompi');
@@ -22,7 +23,7 @@ export function estimateFunding({ request, entries, feerate, feeOptions }) {
   // charges. The exact fee is recomputed from the SDK after building.
   const policyFee = estimateCreationFee({ mass: CREATION_MASS_BOUND, priorityFeerate: feerate, options: feeOptions }).feeSompi;
   const effectiveFee = policyFee > committedFee ? policyFee : committedFee;
-  const target = stakeSompi + effectiveFee;
+  const target = escrow + effectiveFee;
 
   const { selected, totalSompi } = selectOrdinaryUtxos({ utxos: entries, targetSompi: target });
   const fundingInputs = raw.filter((entry) => selected.some((s) => s.transactionId === entry.transactionId && s.index === entry.index));

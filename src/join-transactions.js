@@ -1,4 +1,4 @@
-import { ProtocolError } from './protocol.js';
+import { escrowSompi, joinedEscrowSompi, ProtocolError } from './protocol.js';
 import { buildKccEntrySignatureScript } from './terminal-transactions.js';
 import { loadWasmSdk, verifyWasmSignedSafeJson } from './wasm-transaction.js';
 import { describeTransactionChanges, unsignedInputs } from './transaction-diagnostics.js';
@@ -11,10 +11,12 @@ export function prepareJoinTransaction({ game, joinerPublicKey, joinerCommitment
   }
   const publicKey = bytes(joinerPublicKey, 32, 'joiner public key');
   const commitment = bytes(joinerCommitment, 32, 'joiner commitment');
-  const pot = positive(game.potSompi, 'game stake');
+  const stake = positive(game.stakeSompi ?? game.potSompi, 'game stake');
+  const escrow = escrowSompi(stake);
+  const joined = joinedEscrowSompi(stake);
   if (typeof feeSompi !== 'bigint' || feeSompi < 0n) throw new ProtocolError('INVALID_FEE', 'Fee must be a non-negative sompi amount');
 
-  const input = normalizeInput({ ...gameInput, amount: pot, covenantId: gameInput.covenantId ?? game.currentCovenantId }, buildKccEntrySignatureScript({
+  const input = normalizeInput({ ...gameInput, amount: escrow, covenantId: gameInput.covenantId ?? game.currentCovenantId }, buildKccEntrySignatureScript({
     entry: 'join',
     args: [publicKey, commitment],
     redeemScript: gameInput.redeemScript ?? game.currentRedeemScript,
@@ -26,9 +28,9 @@ export function prepareJoinTransaction({ game, joinerPublicKey, joinerCommitment
     return normalized;
   });
   const totalIn = [input, ...ordinary].reduce((sum, entry) => sum + BigInt(entry.utxo.amount), 0n);
-  const output = { value: String(pot * 2n), scriptPublicKey: continuationScriptPublicKey, covenant: continuationCovenant };
-  const expectedChange = totalIn - pot * 2n - feeSompi;
-  if (expectedChange < 0n) throw new ProtocolError('INSUFFICIENT_UTXOS', 'Joiner inputs cannot fund the matching stake and fee');
+  const output = { value: String(joined), scriptPublicKey: continuationScriptPublicKey, covenant: continuationCovenant };
+  const expectedChange = totalIn - joined - feeSompi;
+  if (expectedChange < 0n) throw new ProtocolError('INSUFFICIENT_UTXOS', 'Joiner inputs cannot fund the matching escrow and fee');
   if (expectedChange > 0n && !change?.scriptPublicKey) throw invalid('Change script public key is required');
   if (change !== undefined && BigInt(change.value) !== expectedChange) throw new ProtocolError('FEE_SUBSTITUTION', 'Change does not match the exact fee');
   const changeOutput = expectedChange > 0n ? { value: String(expectedChange), scriptPublicKey: change.scriptPublicKey, covenant: null } : undefined;
