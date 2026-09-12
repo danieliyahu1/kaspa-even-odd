@@ -58,7 +58,7 @@ function renderMatchmaking() {
           <div class="stake-label-row">
             <label for="match-limit">Play up to (KAS)</label>
           </div>
-          <input id="match-limit" type="number" min="1" max="100" step="1" value="1" class="stake-input" aria-label="Play up to in KAS">
+          <input id="match-limit" type="number" min="1" max="1000000" step="1" value="1" class="stake-input" aria-label="Play up to in KAS">
           <p class="fate">Up to <span id="match-limit-fate">1 KAS</span> &mdash; matched with anyone.</p>
         </div>
         <div class="actions"><button type="button" class="primary" id="match-start">Find a rival</button></div>
@@ -76,15 +76,15 @@ function renderMatchmaking() {
   const limitInput = document.querySelector('#match-limit');
   const limitFate = document.querySelector('#match-limit-fate');
   const rawLimit = () => Math.floor(Number(limitInput.value) || 1);
-  const syncLimit = () => { limitFate.textContent = `${Math.min(100, Math.max(1, rawLimit()))} KAS`; };
+  const syncLimit = () => { limitFate.textContent = `${Math.min(1000000, Math.max(1, rawLimit()))} KAS`; };
   limitInput.addEventListener('input', syncLimit);
   syncLimit();
 
   async function startMatchmaking() {
     const button = document.querySelector('#match-start');
     const typed = Number(limitInput.value);
-    if (!Number.isInteger(typed) || typed < 1 || typed > 100) {
-      return showNotice('#matchmaking-content', 'Enter a limit', 'Use a whole number from 1 to 100 KAS.', 'error');
+    if (!Number.isInteger(typed) || typed < 1 || typed > 1000000) {
+      return showNotice('#matchmaking-content', 'Enter a limit', 'Use a whole number from 1 to 1,000,000 KAS.', 'error');
     }
     button.disabled = true;
     try {
@@ -299,7 +299,7 @@ function renderCreate() {
           <div class="stake-label-row">
             <label for="stake">Your stake (KAS)</label>
           </div>
-          <input id="stake" type="number" min="1" max="100" step="1" value="1" aria-label="Stake in KAS" class="stake-input">
+          <input id="stake" type="number" min="1" max="1000000" step="1" value="1" aria-label="Stake in KAS" class="stake-input">
           <p class="fate">Winner takes the pot &mdash; <span id="stake-fate">2 KAS</span>.</p>
         </div>
         <div id="create-notice"></div>
@@ -340,7 +340,7 @@ function renderCreate() {
 
   const stakeState = () => {
     const raw = Math.floor(Number(stakeInput.value) || 1);
-    return Math.min(100, Math.max(1, raw));
+    return Math.min(1000000, Math.max(1, raw));
   };
   const syncStake = () => {
     const stake = stakeState();
@@ -353,8 +353,8 @@ function renderCreate() {
   document.querySelector('#create-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const stake = stakeState();
-    if (!Number.isInteger(Number(stakeInput.value)) || Number(stakeInput.value) < 1 || Number(stakeInput.value) > 100) {
-      return showNotice('#create-notice', 'Enter a stake', 'Use a whole number from 1 to 100 KAS.', 'error');
+    if (!Number.isInteger(Number(stakeInput.value)) || Number(stakeInput.value) < 1 || Number(stakeInput.value) > 1000000) {
+      return showNotice('#create-notice', 'Enter a stake', 'Use a whole number from 1 to 1,000,000 KAS.', 'error');
     }
     if (number === null) return showNotice('#create-notice', 'Pick a number', 'Choose 1 or 2 before you play.', 'error');
     submit.disabled = true;

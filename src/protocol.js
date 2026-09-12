@@ -4,7 +4,7 @@ export const PROTOCOL_VERSION = 'EO/v4';
 export const NETWORK = 'testnet-10';
 export const ADDRESS_PREFIX = 'kaspatest';
 export const MIN_STAKE_KAS = 1;
-export const MAX_STAKE_KAS = 100;
+export const MAX_STAKE_KAS = 1_000_000;
 export const SOMPI_PER_KAS = 100_000_000n;
 // Protocol v4: the entered stake IS the complete per-player lock — no extra fee
 // is added on top. Both players fund `stake`, so the joined covenant holds

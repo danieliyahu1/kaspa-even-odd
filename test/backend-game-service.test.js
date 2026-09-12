@@ -89,9 +89,9 @@ test('stake acceptance requires an active pair and the agreed lower limit', asyn
   assert.equal(second.stakeKas, 4);
   // The agreed stake itself may not be altered.
   await assert.rejects(service.confirmMatchmaking(first.matchId, 'kaspatest:first', 8), { code: 'INVALID_STAKE' });
-  // Limits are validated as whole KAS amounts from 1 to 100.
+  // Limits are validated as whole KAS amounts from 1 to 1,000,000.
   await assert.rejects(service.joinMatchmaking({ address: 'kaspatest:zero', publicKey: 'c'.repeat(64), limitKas: 0 }), { code: 'INVALID_STAKE' });
-  await assert.rejects(service.joinMatchmaking({ address: 'kaspatest:huge', publicKey: 'd'.repeat(64), limitKas: 101 }), { code: 'INVALID_STAKE' });
+  await assert.rejects(service.joinMatchmaking({ address: 'kaspatest:huge', publicKey: 'd'.repeat(64), limitKas: 1_000_001 }), { code: 'INVALID_STAKE' });
 });
 
 test('preparing a game without a configured fee recipient fails cleanly', async (t) => {

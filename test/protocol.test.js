@@ -25,8 +25,9 @@ const feeAddress = bech32Encode('kaspatest', 0, Buffer.from(feePublicKey, 'hex')
 
 test('converts KAS to exact sompi without floating point', () => {
   assert.equal(stakeToSompi(1), 100_000_000n);
+  assert.equal(stakeToSompi(1_000_000), 100_000_000_000_000n);
   assert.throws(() => stakeToSompi(1.5), { code: 'INVALID_STAKE' });
-  assert.throws(() => stakeToSompi(101), { code: 'INVALID_STAKE' });
+  assert.throws(() => stakeToSompi(1_000_001), { code: 'INVALID_STAKE' });
 });
 
 test('uses the full stake as each lock and charges one fee on the total pot', () => {
