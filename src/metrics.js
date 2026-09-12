@@ -92,6 +92,12 @@ export class Metrics {
     this.set('kaspa_matchmaking_waiting', 'Number of matchmaking sessions waiting for a rival.', {}, value);
   }
 
+  setGameStatusCounts(counts) {
+    for (const [status, count] of Object.entries(counts)) {
+      this.set('kaspa_games_total', 'Current number of games in each lifecycle state.', { status }, count);
+    }
+  }
+
   setRelayEntries(value) {
     this.set('kaspa_relay_entries', 'Number of live relay entries held in memory.', {}, value);
   }
@@ -184,6 +190,7 @@ export const noopMetrics = {
   recordStorage() {},
   recordGameEvent() {},
   setMatchmakingWaiting() {},
+  setGameStatusCounts() {},
   setRelayEntries() {},
   recordFeedback() {},
   setProductInfo() {},

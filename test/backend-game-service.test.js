@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BackendGameService } from '../src/backend-game-service.js';
 import { BackendGameStore } from '../src/backend-game-store.js';
+import { Metrics } from '../src/metrics.js';
 
 const NO_UTXO_RPC = {
   getBlockDagInfo: async () => ({ virtualDaaScore: '100' }),
@@ -107,6 +108,24 @@ test('network status is served without touching the node or exposing a browser w
   assert.equal(status.protocolVersion, 'EO/v4');
   assert.equal(status.gameFeePublicKey, GAME_FEE_PUBLIC_KEY);
   assert.equal(status.wrpcUrl, undefined);
+});
+
+test('refreshTelemetry publishes game state and matchmaking gauges', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = new BackendGameStore(join(directory, 'games.json'));
+  const metrics = new Metrics();
+  const service = new BackendGameService({ rpc: {}, store, metrics, gameFeePublicKey: GAME_FEE_PUBLIC_KEY });
+  await store.saveGame({ gameId: 'a'.repeat(64), status: 'broadcast' });
+  await store.saveGame({ gameId: 'b'.repeat(64), status: 'waiting_for_player_b' });
+  await store.saveGame({ gameId: 'c'.repeat(64), status: 'settled' });
+  await service.refreshTelemetry();
+
+  const text = metrics.render();
+  assert.match(text, /kaspa_games_total\{status="broadcast"\} 1/);
+  assert.match(text, /kaspa_games_total\{status="waiting_for_player_b"\} 1/);
+  assert.match(text, /kaspa_games_total\{status="settled"\} 1/);
+  assert.doesNotMatch(text, /kaspa_games_total\{status="settled"\} 2/);
 });
 
 async function matchRoles(service, matchId) {

@@ -118,6 +118,17 @@ data:
           "targets": [
             { "refId": "A", "expr": "sum by (event) (increase(kaspa_game_events_total[$__rate_interval]))", "legendFormat": "{{event}}" }
           ]
+        },
+        {
+          "id": 9,
+          "title": "Games by current state",
+          "type": "timeseries",
+          "gridPos": { "h": 8, "w": 12, "x": 0, "y": 32 },
+          "datasource": { "type": "prometheus", "uid": "${datasource}" },
+          "fieldConfig": { "defaults": { "unit": "games" }, "overrides": [] },
+          "targets": [
+            { "refId": "A", "expr": "sum by (status) (kaspa_games_total)", "legendFormat": "{{status}}" }
+          ]
         }
       ]
     }

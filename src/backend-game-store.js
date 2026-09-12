@@ -140,6 +140,16 @@ export class BackendGameStore {
     return Object.values(data.matches).filter((match) => match?.status === 'waiting').length;
   }
 
+  async countGamesByStatus() {
+    const data = await this.#read();
+    const counts = {};
+    for (const game of Object.values(data.games)) {
+      const status = game?.status;
+      if (status) counts[status] = (counts[status] ?? 0) + 1;
+    }
+    return counts;
+  }
+
   async #update(change) {
     await this.#updateWithResult((data) => { change(data); });
   }

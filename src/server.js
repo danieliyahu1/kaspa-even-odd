@@ -100,6 +100,12 @@ await store.init();
 // not the slow one. Never block startup or fail it on a cold node.
 void chainClient.connect().catch((error) => logger.debug('rpc_warmup_failed', { message: error?.message }));
 
+// Seed the matchmaking and game-state gauges, and keep them fresh across
+// restarts. Game status changes during live sessions update them directly.
+void gameService.refreshTelemetry().catch((error) => logger.debug('telemetry_refresh_failed', { message: error?.message }));
+const telemetryTimer = setInterval(() => { void gameService.refreshTelemetry().catch((error) => logger.debug('telemetry_refresh_failed', { message: error?.message })); }, 60_000);
+telemetryTimer.unref();
+
 const server = createServer((req, res) => {
   const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
   const route = routeLabel(pathname);

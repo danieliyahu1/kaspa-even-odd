@@ -117,7 +117,7 @@ export class BackendGameService {
     verifySignedCreationSafeJson({ preparedTxJson: prepared.txJson, signedTxJson, request, policy: prepared.policy });
     const transactionId = validateGameId(await this.rpc.submitSafeJson(signedTxJson));
     this.#logPlayer('creation_submit', request.creatorAddress, { gameId: transactionId, matchId: matchId ?? null });
-    await this.store.saveGame({
+    await this.#saveGame({
       gameId: transactionId,
       network: NETWORK,
       protocolVersion: PROTOCOL_VERSION,
@@ -217,7 +217,7 @@ export class BackendGameService {
     verifySignedJoinTransaction({ preparedTxJson: prepared.txJson, signedTxJson });
     const transactionId = validateGameId(await this.rpc.submitSafeJson(signedTxJson));
     this.#logPlayer('join_submit', prepared.joinerAddress, { gameId: id, transactionId });
-    await this.store.saveGame({
+    await this.#saveGame({
       ...gameRecord,
       status: 'join_broadcast',
       join: {
@@ -325,7 +325,7 @@ export class BackendGameService {
       payoutAddress: prepared.payoutAddress,
       submittedAt: new Date().toISOString(),
     };
-    await this.store.saveGame({ ...gameRecord, status: prepared.winner ? 'settlement_broadcast' : 'reveal_broadcast', reveals: [...(gameRecord.reveals ?? []), reveal] });
+    await this.#saveGame({ ...gameRecord, status: prepared.winner ? 'settlement_broadcast' : 'reveal_broadcast', reveals: [...(gameRecord.reveals ?? []), reveal] });
     this.metrics.recordGameEvent('reveal_submitted');
     return { gameId: id, transactionId, status: prepared.winner ? 'settlement_broadcast' : 'reveal_broadcast' };
   }
@@ -453,7 +453,7 @@ export class BackendGameService {
       continuationOutputIndex: prepared.continuationOutputIndex,
       submittedAt: new Date().toISOString(),
     };
-    await this.store.saveGame({ ...gameRecord, status: `${action}_broadcast`, safetyActions: [...(gameRecord.safetyActions ?? []), terminal] });
+    await this.#saveGame({ ...gameRecord, status: `${action}_broadcast`, safetyActions: [...(gameRecord.safetyActions ?? []), terminal] });
     this.metrics.recordGameEvent(`${action}_submitted`);
     return { gameId: id, transactionId, status: `${action}_broadcast` };
   }
@@ -479,7 +479,7 @@ export class BackendGameService {
       : refreshed.join
         ? (confirmation.status === 'confirmed' ? 'joined' : refreshed.status)
       : (confirmation.status === 'confirmed' ? 'waiting_for_player_b' : confirmation.status);
-    if (status !== refreshed.status) await this.store.saveGame({ ...refreshed, status, confirmation, updatedAt: new Date().toISOString() });
+    if (status !== refreshed.status) await this.#saveGame({ ...refreshed, status, confirmation, updatedAt: new Date().toISOString() });
     const safetyAction = status === 'first_revealed' ? 'fallback_claim'
       : status === 'joined' || status === 'refund_partial' ? 'refund_player'
       : status === 'waiting_for_player_b' ? 'creator_refund' : null;
@@ -586,7 +586,7 @@ export class BackendGameService {
       const index = reveals.indexOf(pending);
       reveals[index] = { ...pending, status: 'confirmed', confirmedDaaScore: String(currentDaaScore) };
       const updated = { ...record, reveals, status: pending.winner ? 'settled' : 'first_revealed', ...(pending.winner ? { winner: pending.winner } : {}) };
-      await this.store.saveGame(updated);
+      await this.#saveGame(updated);
       return updated;
     } catch (error) {
       if (error?.code === 'ACTION_NOT_CONFIRMED') return record;
@@ -614,7 +614,7 @@ export class BackendGameService {
         : pending.action === 'creator_refund' ? 'creator_refunded'
         : refundCount >= 2 ? 'refunded' : 'refund_partial';
       const updated = { ...record, safetyActions: actions, status };
-      await this.store.saveGame(updated);
+      await this.#saveGame(updated);
       return updated;
     } catch (error) {
       if (error?.code === 'ACTION_NOT_CONFIRMED') return record;
@@ -799,6 +799,25 @@ const candidates = fundingCandidates(ordinary, targetSompi);
     } catch {
       // Backlog is best-effort telemetry; never let it affect a request.
     }
+  }
+
+  async #recordGameStatusCounts() {
+    try {
+      this.metrics.setGameStatusCounts(await this.store.countGamesByStatus());
+    } catch {
+      // Backlog is best-effort telemetry; never let it affect a request.
+    }
+  }
+
+  async #saveGame(record) {
+    await this.store.saveGame(record);
+    await this.#recordGameStatusCounts();
+  }
+
+  // Recompute the matchmaking and game-state gauges from the store. Called on
+  // startup and periodically so the gauges stay correct across restarts.
+  async refreshTelemetry() {
+    await Promise.all([this.#recordMatchmakingBacklog(), this.#recordGameStatusCounts()]);
   }
 
   #matchPlayer(match, address) {
