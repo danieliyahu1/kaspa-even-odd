@@ -96,6 +96,10 @@ export class Metrics {
     this.set('kaspa_relay_entries', 'Number of live relay entries held in memory.', {}, value);
   }
 
+  recordFeedback({ outcome }) {
+    this.increment('kaspa_feedback_total', 'Anonymous user feedback submissions.', { outcome });
+  }
+
   setProductInfo(version) {
     this.set('kaspa_app_info', 'Application build information.', { version }, 1);
   }
@@ -181,6 +185,7 @@ export const noopMetrics = {
   recordGameEvent() {},
   setMatchmakingWaiting() {},
   setRelayEntries() {},
+  recordFeedback() {},
   setProductInfo() {},
   render() {
     return '';
