@@ -158,23 +158,33 @@ Runtime details:
 - Readiness endpoint: `/readyz` (returns 503 unless the state volume is both
   readable and writable and the store parses as valid JSON)
 - Liveness endpoint: `/healthz` (process liveness only)
-- Required runtime secrets: none. No ExternalSecret is needed; the `oci-vault`
-  `ClusterSecretStore` contract is unused because the app has no server-side
-  secret. `GAME_FEE_PUBLIC_KEY` is a public x-only key (not a private key),
-  so it is set as a plain environment value. Wallet private keys never leave
-  the browser.
+- Required runtime secrets: none beyond the fee wallet identity. The app holds
+  no private key — `GAME_FEE_ADDRESS` is a public wallet address — so it is
+  never a literal in this repository. In the cluster the Deployment reads it
+  from the `kaspa-even-odd-fee` Secret (`address` key) via
+  `valueFrom.secretKeyRef`; locally it is set with `--env-file=.env` (the
+  `.env` file is gitignored). Wallet private keys never leave the browser.
 - Required network: `KASPA_NETWORK=testnet-10` (the process fails closed for
   any other value); `KASPA_WRPC_URL` pins the server's testnet-10 wRPC node
   (the SDK resolver is the fallback). The browser never talks to a node
   directly; all chain reads, fee estimation, transaction preparation, and
   broadcast happen server-side.
-- The 1% on-chain game fee: `GAME_FEE_PUBLIC_KEY` (required) is the
-  64-hex-char x-only public key of the game wallet that receives `2F` (2% of
-  the displayed stake) when a game settles with a winner (second reveal or
-  fallback claim). Each player escrows displayed stake plus 1%; refunds and
-  no-reveal flows return the exact escrow, so the fee is only ever created as
-  a separate winner-funded output, never deducted from a player's stake.
-  The process refuses to start without this variable.
+- The 1% on-chain game fee: `GAME_FEE_ADDRESS` is the `kaspatest:` wallet
+  address of the game wallet that receives `2F` (2% of the displayed stake)
+  when a game settles with a winner (second reveal or fallback claim). Kaspa
+  version-0 (PubKey) addresses embed the recipient's x-only public key
+  directly, so the server decodes the address at startup and bakes that key
+  into every game's covenant state. Each player escrows displayed stake plus
+  1%; refunds and no-reveal flows return the exact escrow, so the fee is only
+  ever created as a separate winner-funded output, never deducted from a
+  player's stake. The process fails closed: it refuses to start when neither
+  `GAME_FEE_ADDRESS` nor the raw-key fallback `GAME_FEE_PUBLIC_KEY` is
+  provided, so a misconfigured pod never serves games without a fee
+  recipient. Create the cluster Secret out-of-band (its value never lives in
+  Git):
+  `kubectl create secret generic kaspa-even-odd-fee --from-literal=address=kaspatest:...`
+  The Deployment references it with `valueFrom.secretKeyRef`, so the pod also
+  fails to be created when the Secret is missing.
 - Required persistent storage: the `kaspa-even-odd-state` PVC mounted at
   `/var/lib/kaspa-even-odd` stores non-secret backend game metadata. It is
   `ReadWriteOnce` and only ever mounted by a single replica; the Deployment uses

@@ -122,7 +122,7 @@ jobs:
           if [ "${{ github.event_name }}" = "push" ]; then docker pull "$IMAGE_REF"; fi
           docker run --detach --rm --name kaspa-even-odd -p 3000:3000 -p 9464:9464 \
             -e PORT=3000 -e METRICS_PORT=9464 -e GAME_STORE_PATH=/tmp/games.json \
-            -e GAME_FEE_PUBLIC_KEY=1111111111111111111111111111111111111111111111111111111111111111 \
+            -e GAME_FEE_ADDRESS="${{ secrets.GAME_FEE_ADDRESS }}" \
             "$IMAGE_REF"
           trap 'docker stop kaspa-even-odd' EXIT
           for attempt in $(seq 1 30); do

@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { parseInvite, serializeInvite } from '../src/invite.js';
 import { MemoryGameStore, prepareCreateGame } from '../src/create-game.js';
-import { ProtocolError, stakeToSompi, escrowSompi } from '../src/protocol.js';
+import { ProtocolError, stakeToSompi, escrowSompi, validateGameFeeAddress, resolveGameFeePublicKey } from '../src/protocol.js';
+import { bech32Encode } from '../src/hashes/bech32.mjs';
 import { KaspaCreationConfirmer, submitSignedTransaction } from '../src/kaspa-adapter.js';
 import { KaswareWalletAdapter, waitForKaswareProvider } from '../src/kasware-wallet.js';
 import { createGenesisGameOutput } from '../src/genesis-transaction.js';
@@ -19,10 +20,29 @@ const valid = {
   gameFeePublicKey: '11'.repeat(32),
 };
 
+const feePublicKey = '11'.repeat(32);
+const feeAddress = bech32Encode('kaspatest', 0, Buffer.from(feePublicKey, 'hex'));
+
 test('converts KAS to exact sompi without floating point', () => {
   assert.equal(stakeToSompi(1), 100_000_000n);
   assert.throws(() => stakeToSompi(1.5), { code: 'INVALID_STAKE' });
   assert.throws(() => stakeToSompi(101), { code: 'INVALID_STAKE' });
+});
+
+test('decodes the payer fee public key from a version-0 wallet address', () => {
+  assert.equal(validateGameFeeAddress(feeAddress), feePublicKey);
+});
+
+test('rejects invalid fee addresses and missing fee configuration', () => {
+  assert.throws(() => validateGameFeeAddress('kaspatest:not-an-address'), { code: 'INVALID_GAME_FEE' });
+  assert.throws(() => validateGameFeeAddress(bech32Encode('kaspa', 0, Buffer.from(feePublicKey, 'hex'))), { code: 'INVALID_GAME_FEE' });
+  assert.throws(() => resolveGameFeePublicKey({}), { code: 'INVALID_GAME_FEE' });
+});
+
+test('prefers the configured fee address over the raw public key', () => {
+  assert.equal(resolveGameFeePublicKey({ GAME_FEE_ADDRESS: feeAddress }), feePublicKey);
+  assert.equal(resolveGameFeePublicKey({ GAME_FEE_ADDRESS: feeAddress, GAME_FEE_PUBLIC_KEY: '22'.repeat(32) }), feePublicKey);
+  assert.equal(resolveGameFeePublicKey({ GAME_FEE_PUBLIC_KEY: '22'.repeat(32) }), '22'.repeat(32));
 });
 
 test('prepares deterministic game metadata and separates fees', () => {

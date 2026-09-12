@@ -1,5 +1,8 @@
+import { bech32Decode } from './hashes/bech32.mjs';
+
 export const PROTOCOL_VERSION = 'EO/v3';
 export const NETWORK = 'testnet-10';
+export const ADDRESS_PREFIX = 'kaspatest';
 export const MIN_STAKE_KAS = 1;
 export const MAX_STAKE_KAS = 100;
 export const SOMPI_PER_KAS = 100_000_000n;
@@ -64,6 +67,30 @@ export function validateGameFeePublicKey(value, name = 'game fee public key') {
   if (normalized.length === 64) return normalized;
   if (normalized.length === 66 && /^(02|03)/.test(normalized)) return normalized.slice(2);
   throw new ProtocolError('INVALID_GAME_FEE', `${name} must be a 32-byte x-only or compressed public key`);
+}
+
+// Kaspa version-0 (PubKey) addresses embed the 32-byte x-only public key
+// directly, so a wallet address is a valid fee-recipient configuration.
+export function validateGameFeeAddress(value, name = 'game fee address') {
+  if (typeof value !== 'string' || !value.startsWith(`${ADDRESS_PREFIX}:`)) {
+    throw new ProtocolError('INVALID_GAME_FEE', `${name} must be a ${ADDRESS_PREFIX}: wallet address`);
+  }
+  let decoded;
+  try {
+    decoded = bech32Decode(value);
+  } catch {
+    throw new ProtocolError('INVALID_GAME_FEE', `${name} must be a valid ${ADDRESS_PREFIX} address`);
+  }
+  if (decoded.prefix !== ADDRESS_PREFIX || decoded.version !== 0 || decoded.payload.length !== 32) {
+    throw new ProtocolError('INVALID_GAME_FEE', `${name} must be a version-0 (PubKey) ${ADDRESS_PREFIX} address`);
+  }
+  return Buffer.from(decoded.payload).toString('hex');
+}
+
+export function resolveGameFeePublicKey(env, name = 'game fee configuration') {
+  if (env.GAME_FEE_ADDRESS) return validateGameFeeAddress(env.GAME_FEE_ADDRESS);
+  if (env.GAME_FEE_PUBLIC_KEY) return validateGameFeePublicKey(env.GAME_FEE_PUBLIC_KEY);
+  throw new ProtocolError('INVALID_GAME_FEE', `${name} requires GAME_FEE_ADDRESS (or GAME_FEE_PUBLIC_KEY)`);
 }
 
 export function validateSide(side) {

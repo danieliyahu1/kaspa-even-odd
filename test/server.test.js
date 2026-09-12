@@ -4,6 +4,10 @@ import { spawn } from 'node:child_process';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { bech32Encode } from '../src/hashes/bech32.mjs';
+
+const feePublicKey = '11'.repeat(32);
+const feeAddress = bech32Encode('kaspatest', 0, Buffer.from(feePublicKey, 'hex'));
 
 test('server serves the browser application and health probe', async (t) => {
   const port = 3100 + Math.floor(Math.random() * 500);
@@ -15,7 +19,7 @@ test('server serves the browser application and health probe', async (t) => {
       PORT: String(port),
       METRICS_PORT: String(metricsPort),
       GAME_STORE_PATH: join(directory, 'games.json'),
-      GAME_FEE_PUBLIC_KEY: '11'.repeat(32),
+      GAME_FEE_ADDRESS: feeAddress,
       RATE_LIMIT_PER_MINUTE: '6',
       LOG_LEVEL: 'debug',
     },
@@ -54,6 +58,11 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(pageHtml, /Connect Wallet/);
   assert.match(pageHtml, /id="wallet-button"/);
   assert.deepEqual(await health.json().then(({ ok, service, network }) => ({ ok, service, network })), { ok: true, service: 'kaspa-even-odd', network: 'testnet-10' });
+  assert.deepEqual(await (await fetch(`http://127.0.0.1:${port}/api/config`)).json(), {
+    network: 'testnet-10',
+    protocolVersion: 'EO/v3',
+    gameFeePublicKey: feePublicKey,
+  });
   assert.equal(missing.status, 404);
   assert.equal(demoApi.status, 404);
   const csp = page.headers.get('content-security-policy') ?? '';
@@ -229,6 +238,25 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(stderr, /http_request/);
   assert.match(stderr, /route="\/api\/matchmaking\/join"/);
   assert.doesNotMatch(stderr, /kaspatest:|[0-9a-f]{64}/);
+});
+
+test('refuses to start without the fee address or key configured', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-server-'));
+  const child = spawn(process.execPath, ['src/server.js'], {
+    env: { ...process.env, PORT: '0', METRICS_PORT: '0', GAME_STORE_PATH: join(directory, 'games.json') },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  child.stderr.setEncoding('utf8');
+  child.stderr.on('data', (chunk) => { stderr += chunk; });
+  const code = await new Promise((resolve) => {
+    child.on('exit', (exitCode) => resolve(exitCode));
+    setTimeout(() => { child.kill(); resolve('timeout'); }, 5000).unref();
+  });
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  assert.notEqual(code, 'timeout');
+  assert.notEqual(code, 0);
+  assert.match(stderr, /GAME_FEE_ADDRESS/);
 });
 
 async function waitForServer(url) {
