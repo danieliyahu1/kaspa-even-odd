@@ -79,6 +79,7 @@ function renderMatchmaking() {
     } catch (error) {
       button.disabled = false;
       logError('matchmaking_failed', { code: error.code, message: error.message });
+      if (guardKaswareShortfall('#matchmaking-content', error)) return;
       showNotice('#matchmaking-content', 'Could not find a rival', error.message, 'error');
     }
   }
@@ -344,6 +345,7 @@ function renderCreate() {
     } catch (error) {
       submit.disabled = false;
       logError('create_game_failed', { code: error.code, message: error.message });
+      if (guardKaswareShortfall('#create-notice', error)) return;
       showNotice('#create-notice', 'Game was not created', error.message, 'error');
     }
   });
@@ -501,6 +503,7 @@ async function bindJoin(gameId, game) {
     } catch (error) {
       submit.disabled = false;
       logError('join_game_failed', { code: error.code, message: error.message });
+      if (guardKaswareShortfall('#join-notice', error)) return;
       showNotice('#join-notice', error.message, '', 'error');
     }
   });
@@ -560,7 +563,9 @@ function bindReveal(gameId) {
     } catch (error) {
       reveal.disabled = false;
       logError('reveal_failed', { code: error.code, message: error.message });
-      if (error.code === 'INVALID_REVEAL') {
+      if (error.code === 'KASWARE_UNAVAILABLE') {
+        renderKaswareShortfall('#reveal-notice');
+      } else if (error.code === 'INVALID_REVEAL') {
         showNotice('#reveal-notice', 'Reveal did not match', 'The saved number no longer matches the locked commitment. You may have started this game in another browser.', 'error');
       } else {
         showNotice('#reveal-notice', error.message, '', 'error');
@@ -649,6 +654,7 @@ function bindSafety(gameId, game) {
     } catch (error) {
       safetyButton.disabled = false;
       logError('safety_action_failed', { code: error.code, message: error.message });
+      if (guardKaswareShortfall('#game-safety', error)) return;
       showNotice('#game-safety', error.message, '', 'error');
     }
   });
@@ -906,8 +912,10 @@ async function connectKasware(selector) {
   const provider = globalThis.kasware;
   if (!provider) {
     logError('kasware_missing', { download: KASWARE_DOWNLOAD });
-    showNotice(selector, 'Install KasWare to play', 'Even/Odd uses the KasWare wallet.', 'error');
-    throw new Error(`KasWare wallet extension is required. Get it at ${KASWARE_DOWNLOAD}`);
+    renderKaswareShortfall(selector);
+    const error = new Error('KasWare wallet extension is not installed');
+    error.code = 'KASWARE_UNAVAILABLE';
+    throw error;
   }
   logInfo('kasware_connect_start', { selector });
   showNotice(selector, 'Connecting to KasWare', 'Confirm the connection in your wallet.', '');
@@ -987,6 +995,23 @@ async function api(url, options = {}) {
   }
   logDebug('api_ok', { method, path, status: response.status });
   return body;
+}
+
+function renderKaswareShortfall(selector) {
+  const node = document.querySelector(selector);
+  if (!node) return;
+  node.innerHTML = `
+    <div class="notice error">
+      <strong>Install KasWare to play</strong>
+      Even/Odd needs the KasWare wallet extension in your browser to play.
+      <div class="actions"><a class="primary" href="${KASWARE_DOWNLOAD}" target="_blank" rel="noopener noreferrer">Install KasWare</a></div>
+    </div>`;
+}
+
+function guardKaswareShortfall(selector, error) {
+  if (error?.code !== 'KASWARE_UNAVAILABLE') return false;
+  renderKaswareShortfall(selector);
+  return true;
 }
 
 function showNotice(selector, title, message, kind) {
