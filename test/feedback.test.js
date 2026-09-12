@@ -37,7 +37,7 @@ test('validateFeedback returns a trimmed message', () => {
 
 test('formatFeedbackMessage is the title and the message, nothing else', () => {
   const text = formatFeedbackMessage({ message: 'The reveal button felt off.' });
-  assert.equal(text, 'New Even/Odd feedback\n\nThe reveal button felt off.');
+  assert.equal(text, 'New Even/Odd feedback:\n\nThe reveal button felt off.');
   assert.doesNotMatch(text, /Page:/);
   assert.doesNotMatch(text, /Screen:/);
   assert.doesNotMatch(text, /Browser:/);
@@ -299,7 +299,7 @@ test('feedback endpoint stores undeliverable feedback and retries it against the
   assert.equal(telegram.requests.length, 1);
   assert.equal(telegram.requests[0].method, 'POST');
   assert.equal(telegram.requests[0].body.chat_id, 'dummy-chat-id');
-  assert.equal(telegram.requests[0].body.text, 'New Even/Odd feedback\n\nLoved the game');
+  assert.equal(telegram.requests[0].body.text, 'New Even/Odd feedback:\n\nLoved the game');
   assert.equal(telegram.requests[0].body.disable_web_page_preview, true);
 
   // Delivery failed, so the feedback must be stored and retried later.
@@ -356,7 +356,7 @@ test('feedback endpoint delivers immediately and leaves the queue empty when Tel
   assert.equal(body.accepted, true);
   assert.equal(body.queued, undefined);
   assert.equal(telegram.requests.length, 1);
-  assert.equal(telegram.requests[0].body.text, 'New Even/Odd feedback\n\nDelivered straight away');
+  assert.equal(telegram.requests[0].body.text, 'New Even/Odd feedback:\n\nDelivered straight away');
 
   const raw = await readFile(spillPath, 'utf8');
   assert.deepEqual(JSON.parse(raw), []);

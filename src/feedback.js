@@ -29,7 +29,7 @@ export function validateFeedback(input = {}) {
 }
 
 export function formatFeedbackMessage(entry) {
-  return [`New Even/Odd feedback`, '', entry.message].join('\n');
+  return [`New Even/Odd feedback:`, '', entry.message].join('\n');
 }
 
 export class TelegramFeedback {
