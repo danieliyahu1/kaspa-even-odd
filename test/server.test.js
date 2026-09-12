@@ -95,6 +95,7 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(browserSource, /api\/games\/\$\{gameId\}\/reveal\/prepare/);
   assert.match(browserSource, /api\/matchmaking\/join/);
   assert.match(browserSource, /api\/matchmaking\/\$\{match\.matchId\}\/leave/);
+  assert.match(browserSource, /api\/matchmaking\/\$\{match\.matchId\}\/confirm/);
   assert.match(browserSource, /data-action="reveal"/);
   assert.match(browserSource, /data-commit-number/);
   assert.match(browserSource, /data-join-number/);
@@ -238,6 +239,55 @@ test('server serves the browser application and health probe', async (t) => {
   assert.match(stderr, /http_request/);
   assert.match(stderr, /route="\/api\/matchmaking\/join"/);
   assert.doesNotMatch(stderr, /kaspatest:|[0-9a-f]{64}/);
+});
+
+test('matchmaking joins, refuses a wrong stake, and becomes ready when both accept', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-http-match-'));
+  const port = 3700 + Math.floor(Math.random() * 300);
+  const metricsPort = port + 600;
+  const child = spawn(process.execPath, ['src/server.js'], {
+    env: {
+      ...process.env,
+      PORT: String(port),
+      METRICS_PORT: String(metricsPort),
+      GAME_STORE_PATH: join(directory, 'games.json'),
+      RATE_LIMIT_PER_MINUTE: '60',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  t.after(() => child.kill());
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await waitForServer(`http://127.0.0.1:${port}/readyz`);
+
+  const origin = `http://127.0.0.1:${port}`;
+  const post = (path, body) => fetch(`${origin}${path}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+
+  const first = await post('/api/matchmaking/join', { address: 'kaspatest:one', publicKey: 'a'.repeat(64), limitKas: 20 }).then((response) => response.json());
+  assert.equal(first.status, 'waiting');
+  assert.equal(first.myLimitKas, 20);
+  assert.equal(first.stakeKas, null);
+
+  const second = await post('/api/matchmaking/join', { address: 'kaspatest:two', publicKey: 'b'.repeat(64), limitKas: 6 }).then((response) => response.json());
+  assert.equal(second.status, 'matched');
+  assert.equal(second.stakeKas, 6);
+
+  // A stake other than the agreed lower limit cannot lock anything.
+  const refused = await post(`/api/matchmaking/${first.matchId}/confirm`, { address: 'kaspatest:one', stakeKas: 20 });
+  assert.equal(refused.status, 400);
+
+  const accepted = await post(`/api/matchmaking/${first.matchId}/confirm`, { address: 'kaspatest:one', stakeKas: 6 }).then((response) => response.json());
+  assert.equal(accepted.status, 'matched');
+  assert.equal(accepted.confirmed, true);
+  assert.equal(accepted.opponentConfirmed, false);
+
+  const ready = await post(`/api/matchmaking/${first.matchId}/confirm`, { address: 'kaspatest:two', stakeKas: 6 }).then((response) => response.json());
+  assert.equal(ready.status, 'ready');
+  assert.equal(ready.confirmed, true);
+  assert.equal(ready.opponentConfirmed, true);
 });
 
 test('starts without a fee recipient configured and reports the game fee as not configured', async (t) => {

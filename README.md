@@ -266,9 +266,12 @@ The friend invite URL (`/join?v=…&game=<gameId>`) carries only the protocol
 version and confirmed game identifier; the server holds the rest of the public
 creation state. A rival game works the same way, except the server introduces
 the two players and attaches the creator's on-chain game to the matchmaking
-session. The server builds and broadcasts every transaction, so it is required
-for the normal flow; the covenant still enforces the reveal/claim/refund
-timeouts on-chain regardless of who broadcasts.
+session. Matchmaking is "play up to": each player sets the most they are
+comfortable playing, the server pairs any two waiters, and the game is the
+lower of the two limits. Both players must accept the agreed stake before the
+creator locks any funds. The server builds and broadcasts every transaction, so
+it is required for the normal flow; the covenant still enforces the
+reveal/claim/refund timeouts on-chain regardless of who broadcasts.
 
 ## Support
 
