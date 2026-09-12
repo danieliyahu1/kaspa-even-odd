@@ -1,0 +1,9 @@
+* text=auto
+
+# Reproducibility manifests (covenant source, artifact, constructor args, and
+# pins) are hashed byte-for-byte in tests and CI. Keep them LF at all times so
+# the pinned sha256 values survive any checkout on any platform.
+covenant/** text eol=lf
+
+# The vendored Rusty Kaspa WASM SDK is opaque binary; never convert.
+vendor/** -text
