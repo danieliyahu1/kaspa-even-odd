@@ -19,40 +19,79 @@ function serviceOptions(store) {
   return { rpc: {}, store, gameFeePublicKey: GAME_FEE_PUBLIC_KEY };
 }
 
-test('matchmaking pairs wallets and assigns each a role and side', async (t) => {
+test('matchmaking pairs wallets at the lower limit and assigns each a role and side', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const service = new BackendGameService(serviceOptions(new BackendGameStore(join(directory, 'games.json'))));
-  const first = await service.joinMatchmaking({ address: 'kaspatest:first', publicKey: 'a'.repeat(64) });
+  const first = await service.joinMatchmaking({ address: 'kaspatest:first', publicKey: 'a'.repeat(64), limitKas: 10 });
   assert.equal(first.status, 'waiting');
   assert.equal(first.role, null);
-  const second = await service.joinMatchmaking({ address: 'kaspatest:second', publicKey: 'b'.repeat(64) });
+  assert.equal(first.myLimitKas, 10);
+  assert.equal(first.rivalLimitKas, null);
+  const second = await service.joinMatchmaking({ address: 'kaspatest:second', publicKey: 'b'.repeat(64), limitKas: 3 });
 
   assert.equal(second.status, 'matched');
+  assert.equal(second.stakeKas, 3);
+  assert.equal(second.myLimitKas, 3);
+  assert.equal(second.rivalLimitKas, 10);
   assert.equal(second.opponentConnected, true);
   assert.ok(['creator', 'joiner'].includes(second.role));
   assert.ok(['even', 'odd'].includes(second.side));
 
   const firstStatus = await service.matchmakingStatus(first.matchId, 'kaspatest:first');
   assert.equal(firstStatus.matchId, second.matchId);
+  assert.equal(firstStatus.stakeKas, 3);
   assert.equal(firstStatus.role === 'creator' ? 'joiner' : 'creator', second.role);
+
+  await service.confirmMatchmaking(first.matchId, 'kaspatest:first', 3);
+  const pending = await service.matchmakingStatus(first.matchId, 'kaspatest:first');
+  assert.equal(pending.status, 'matched');
+  assert.equal(pending.confirmed, true);
+  assert.equal(pending.opponentConfirmed, false);
+  const ready = await service.confirmMatchmaking(first.matchId, 'kaspatest:second', 3);
+  assert.equal(ready.status, 'ready');
+  assert.equal(ready.confirmed, true);
+  assert.equal(ready.opponentConfirmed, true);
 });
 
-test('only the match creator may start the game, with the assigned side', async (t) => {
+test('only the match creator may start the game, with the assigned side and agreed stake', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const service = new BackendGameService({ rpc: NO_UTXO_RPC, store: new BackendGameStore(join(directory, 'games.json')), gameFeePublicKey: GAME_FEE_PUBLIC_KEY });
   const first = await service.joinMatchmaking({ address: 'kaspatest:first', publicKey: 'a'.repeat(64) });
-  await service.joinMatchmaking({ address: 'kaspatest:second', publicKey: 'b'.repeat(64) });
+  const matched = await service.joinMatchmaking({ address: 'kaspatest:second', publicKey: 'b'.repeat(64) });
+  const stakeKas = matched.stakeKas;
   const { creatorAddress, joinerAddress, creatorPublicKey, creatorView } = await matchRoles(service, first.matchId);
 
-  const base = { matchId: first.matchId, creatorAddress, creatorPublicKey, creatorCommitment: 'e'.repeat(64), side: creatorView.side, stakeKas: 1 };
+  const base = { matchId: first.matchId, creatorAddress, creatorPublicKey, creatorCommitment: 'e'.repeat(64), side: creatorView.side, stakeKas };
+  // The game cannot start before both players accept the stake.
+  await assert.rejects(service.prepareCreation(base), { code: 'MATCH_NOT_READY' });
+  await service.confirmMatchmaking(first.matchId, 'kaspatest:first', stakeKas);
+  await service.confirmMatchmaking(first.matchId, 'kaspatest:second', stakeKas);
   // The joiner is not the creator.
   await assert.rejects(service.prepareCreation({ ...base, creatorAddress: joinerAddress }), { code: 'MATCH_NOT_READY' });
   // The creator must use the assigned side.
   await assert.rejects(service.prepareCreation({ ...base, side: creatorView.side === 'even' ? 'odd' : 'even' }), { code: 'MATCH_NOT_READY' });
+  // The creator must use the agreed stake.
+  await assert.rejects(service.prepareCreation({ ...base, stakeKas: stakeKas + 1 }), { code: 'MATCH_NOT_READY' });
   // A valid creator request proceeds to chain work (empty wallet UTXOs).
   await assert.rejects(service.prepareCreation(base), { code: 'NO_UTXOS' });
+});
+
+test('stake acceptance requires an active pair and the agreed lower limit', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const service = new BackendGameService(serviceOptions(new BackendGameStore(join(directory, 'games.json'))));
+  const first = await service.joinMatchmaking({ address: 'kaspatest:first', publicKey: 'a'.repeat(64), limitKas: 4 });
+  // No stake yet while waiting alone.
+  await assert.rejects(service.confirmMatchmaking(first.matchId, 'kaspatest:first', 4), { code: 'MATCH_NOT_READY' });
+  const second = await service.joinMatchmaking({ address: 'kaspatest:second', publicKey: 'b'.repeat(64), limitKas: 8 });
+  assert.equal(second.stakeKas, 4);
+  // The agreed stake itself may not be altered.
+  await assert.rejects(service.confirmMatchmaking(first.matchId, 'kaspatest:first', 8), { code: 'INVALID_STAKE' });
+  // Limits are validated as whole KAS amounts from 1 to 100.
+  await assert.rejects(service.joinMatchmaking({ address: 'kaspatest:zero', publicKey: 'c'.repeat(64), limitKas: 0 }), { code: 'INVALID_STAKE' });
+  await assert.rejects(service.joinMatchmaking({ address: 'kaspatest:huge', publicKey: 'd'.repeat(64), limitKas: 101 }), { code: 'INVALID_STAKE' });
 });
 
 test('preparing a game without a configured fee recipient fails cleanly', async (t) => {
