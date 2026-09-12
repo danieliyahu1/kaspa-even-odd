@@ -13,9 +13,11 @@ import { noopMetrics } from './metrics.js';
 import { EphemeralPreparations } from './ephemeral-preparations.js';
 import { KaspaChainAdapter } from './chain-adapter.js';
 import { logger } from './logger.js';
+import { loadWasmSdk } from './wasm-transaction.js';
 
 const MATCH_STAKE_KAS = 1;
 const TERMINAL_FEE_SOMPI = 4_200_000n;
+const MAX_TERMINAL_STORAGE_MASS = 500_000;
 
 // Application use cases for the Even/Odd game.
 //
@@ -254,11 +256,10 @@ export class BackendGameService {
     if ((gameRecord.reveals ?? []).some((reveal) => reveal.status !== 'confirmed')) throw new ProtocolError('ACTION_PENDING', 'The previous reveal is still confirming');
     const current = await this.#currentGameUtxo(gameRecord, request, confirmedReveals);
     const first = confirmedReveals[0];
-    const funding = await this.#actionFunding(player.address, TERMINAL_FEE_SOMPI);
     const state = this.#revealGameState(id, gameRecord, request, current, confirmedReveals);
 
     const { continuation, winner } = this.#revealContinuation({ request, gameRecord, player, choice, publicKey, first });
-    const prepared = prepareRevealTransaction({
+    const build = (funding) => prepareRevealTransaction({
       game: state,
       caller: player.address,
       currentDaaScore: current.currentDaaScore,
@@ -275,6 +276,8 @@ export class BackendGameService {
       publicKey,
       payoutPublicKey: winner === 'creator' ? request.creatorPublicKey : winner === 'joiner' ? gameRecord.join.joinerPublicKey : publicKey,
     });
+    const funding = await this.#actionFunding(player.address, TERMINAL_FEE_SOMPI, build);
+    const prepared = build(funding);
     const txJson = serializeTerminalTransaction(prepared);
     const preparedHash = Buffer.from(blake2b256(new TextEncoder().encode(txJson))).toString('hex');
     this.ephemeral.save({
@@ -393,7 +396,6 @@ export class BackendGameService {
       throw new ProtocolError('UNSUPPORTED_ACTION', 'Unsupported safety action');
     }
 
-    const funding = await this.#actionFunding(player.address, TERMINAL_FEE_SOMPI);
     let preparedArgs = [publicKey];
     let preparedPayout = playerLockSompi(request.stakeSompi);
     let preparedExtraOutputs = continuation
@@ -404,7 +406,7 @@ export class BackendGameService {
       preparedArgs = [publicKey, request.gameFeePublicKey];
       preparedExtraOutputs = [{ value: gameFeeSompi(request.stakeSompi), scriptPublicKey: playerScriptPublicKey(request.gameFeePublicKey) }];
     }
-    const prepared = prepareTerminalTransaction({
+    const build = (funding) => prepareTerminalTransaction({
       action: covenantEntry,
       gameInput: { ...current.entry, transactionId: current.transactionId, index: current.outputIndex ?? 0, amount: current.value, covenantId: gameRecord.join?.covenantId ?? deserializePrepared(gameRecord.prepared).covenantId, redeemScript: current.redeemScript },
       inputSequence: sequence,
@@ -417,6 +419,8 @@ export class BackendGameService {
       feeSompi: TERMINAL_FEE_SOMPI,
       change: funding.change,
     });
+    const funding = await this.#actionFunding(player.address, TERMINAL_FEE_SOMPI, build);
+    const prepared = build(funding);
     const txJson = serializeTerminalTransaction(prepared);
     const preparedHash = Buffer.from(blake2b256(new TextEncoder().encode(txJson))).toString('hex');
     await this.store.saveActionPrepared({
@@ -662,16 +666,34 @@ export class BackendGameService {
     return { status: currentDaaScore >= BigInt(entry.blockDaaScore) + 1n ? 'confirmed' : 'observed' };
   }
 
-  async #actionFunding(address, feeSompi) {
+  async #actionFunding(address, feeSompi, measure) {
     const response = await this.rpc.getUtxosByAddresses([address]);
     const entries = response.entries ?? response;
-    const { selected } = selectOrdinaryUtxos({ utxos: entries, targetSompi: feeSompi + 1n });
-    const inputs = entries.filter((entry) => selected.some((item) => {
-      const outpoint = entry.outpoint ?? entry;
-      return outpoint.transactionId.toLowerCase() === item.transactionId && outpoint.index === item.index;
-    }));
-    const total = inputs.reduce((sum, entry) => sum + BigInt(entry.amount), 0n);
-    return { inputs, change: { value: total - feeSompi, scriptPublicKey: inputs[0].scriptPublicKey } };
+    const targetSompi = feeSompi + 1n;
+    const ordinary = entries.filter((entry) => !entry.covenantId);
+    if (ordinary.length === 0) {
+      selectOrdinaryUtxos({ utxos: entries, targetSompi });
+    }
+const candidates = fundingCandidates(ordinary, targetSompi);
+    if (candidates.length === 0) selectOrdinaryUtxos({ utxos: entries, targetSompi });
+    let best;
+    let bestMass = Number.POSITIVE_INFINITY;
+    for (const inputs of candidates) {
+      const total = inputs.reduce((sum, entry) => sum + BigInt(entry.amount), 0n);
+      const funding = { inputs, change: { value: total - feeSompi, scriptPublicKey: inputs[0].scriptPublicKey } };
+      try {
+        const prepared = measure ? measure(funding) : null;
+        const mass = prepared ? terminalStorageMass(prepared.transaction) : 0;
+        if (mass <= MAX_TERMINAL_STORAGE_MASS && mass < bestMass) {
+          best = funding;
+          bestMass = mass;
+        }
+      } catch (error) {
+        if (!(error instanceof ProtocolError)) throw error;
+      }
+    }
+    if (best) return best;
+    throw new ProtocolError('STORAGE_MASS_EXCEEDED', `No fee UTXO combination keeps this transaction below the ${MAX_TERMINAL_STORAGE_MASS} storage-mass limit`);
   }
 
   async #safetyReadiness(record, request, safetyAction) {
@@ -855,6 +877,68 @@ function deserializeRequest(request) {
 
 function serializePrepared(prepared) {
   return JSON.parse(JSON.stringify(prepared, (_, value) => typeof value === 'bigint' ? String(value) : value));
+}
+
+function terminalStorageMass(transaction) {
+  const wasm = loadWasmSdk();
+  return Number(wasm.calculateStorageMass(
+    NETWORK,
+    transaction.inputs.map((input) => Number(input.utxo.amount)),
+    transaction.outputs.map((output) => Number(output.value)),
+  ));
+}
+
+function fundingCandidates(entries, targetSompi) {
+  const byOutpoint = (entry) => {
+    const outpoint = entry.outpoint ?? entry;
+    return `${outpoint.transactionId.toLowerCase()}:${outpoint.index}`;
+  };
+  const byAmount = (a, b) => {
+    const amount = BigInt(a.amount) === BigInt(b.amount) ? 0 : BigInt(a.amount) > BigInt(b.amount) ? 1 : -1;
+    return amount !== 0 ? amount : byOutpoint(a).localeCompare(byOutpoint(b));
+  };
+  const ascending = [...entries].sort(byAmount);
+  // Storage mass is dominated by the funded value each input adds, so smallest
+  // values tend to produce the lowest-mass settlements. Bound the search pool
+  // to the ten smallest UTXOs and subsets of up to four inputs.
+  const pool = ascending.slice(0, 10);
+  const MAX_CANDIDATES = 600;
+  const candidates = [];
+  const seen = new Set();
+  const consider = (selected) => {
+    if (selected.reduce((sum, entry) => sum + BigInt(entry.amount), 0n) < targetSompi) return;
+    const key = selected.map(byOutpoint).sort().join('|');
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(selected);
+  };
+  for (const entry of pool) consider([entry]);
+  for (let size = 2; size <= 4 && candidates.length < MAX_CANDIDATES; size += 1) {
+    for (let a = 0; a < pool.length && candidates.length < MAX_CANDIDATES; a += 1) {
+      for (let b = a + 1; b < pool.length && candidates.length < MAX_CANDIDATES; b += 1) {
+        if (size === 2) { consider([pool[a], pool[b]]); continue; }
+        for (let c = b + 1; c < pool.length && candidates.length < MAX_CANDIDATES; c += 1) {
+          if (size === 3) { consider([pool[a], pool[b], pool[c]]); continue; }
+          for (let d = c + 1; d < pool.length && candidates.length < MAX_CANDIDATES; d += 1) {
+            consider([pool[a], pool[b], pool[c], pool[d]]);
+          }
+        }
+      }
+    }
+  }
+  // Keep the legacy deterministic choice available for wallets with more than
+  // ten small UTXOs; the mass-aware candidates are tried first.
+  try {
+    const { selected } = selectOrdinaryUtxos({ utxos: entries, targetSompi });
+    const legacy = entries.filter((entry) => selected.some((item) => {
+      const outpoint = entry.outpoint ?? entry;
+      return outpoint.transactionId.toLowerCase() === item.transactionId && outpoint.index === item.index;
+    }));
+    consider(legacy);
+  } catch {
+    // The caller produces the existing typed funding error below.
+  }
+  return candidates;
 }
 
 function deserializePrepared(prepared) {
