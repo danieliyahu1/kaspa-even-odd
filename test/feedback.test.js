@@ -166,22 +166,25 @@ test('FeedbackService.submit spills but still returns accepted when delivery fai
   assert.equal(spill.entries.length, 1);
 });
 
-test('FeedbackService.submit accepts with a warning when Telegram is not configured', async () => {
+test('FeedbackService.submit stores feedback with a warning when Telegram is not configured', async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), 'feedback-service-disabled-'));
+  t.after(() => rm(dir, { recursive: true, force: true }));
   const warnings = [];
   const service = new FeedbackService({
     deliverer: { enabled: false },
-    spill: new FeedbackSpill({}),
+    spill: new FeedbackSpill({ filePath: join(dir, 'spill.json') }),
     metrics: new Metrics(),
     logger: { warn: (event, fields) => warnings.push({ event, fields }) },
   });
 
   const result = await service.submit({ message: 'offline note' });
   assert.equal(result.accepted, true);
-  assert.equal(result.queued, undefined);
+  assert.equal(result.queued, true);
   assert.equal(warnings.length, 1);
   assert.equal(warnings[0].event, 'feedback_delivery_disabled');
   assert.ok(warnings[0].fields.reason.includes('TELEGRAM_FEEDBACK_BOT_TOKEN'));
-  assert.ok(service.spill.entries.length === 0);
+  assert.equal(service.spill.entries.length, 1);
+  assert.equal(service.spill.entries[0].message, 'offline note');
   assert.ok(service.metrics.render().includes('kaspa_feedback_total{outcome="disabled"}'));
 });
 
@@ -201,17 +204,18 @@ test('FeedbackService.drainPending retries spilled entries', async (t) => {
   assert.equal(spill.entries.length, 0);
 });
 
-test('feedback endpoint accepts with a warning when Telegram is not configured', async (t) => {
+test('feedback endpoint stores feedback with a warning when Telegram is not configured', async (t) => {
   const port = 6100 + Math.floor(Math.random() * 300);
   const metricsPort = port + 600;
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-feedback-'));
+  const spillPath = join(directory, 'spill.json');
   const child = spawn(process.execPath, ['src/server.js'], {
     env: {
       ...process.env,
       PORT: String(port),
       METRICS_PORT: String(metricsPort),
       GAME_STORE_PATH: join(directory, 'games.json'),
-      FEEDBACK_SPILL_PATH: join(directory, 'spill.json'),
+      FEEDBACK_SPILL_PATH: spillPath,
       GAME_FEE_ADDRESS: feeAddress,
       RATE_LIMIT_PER_MINUTE: '300',
       LOG_LEVEL: 'warn',
@@ -232,8 +236,25 @@ test('feedback endpoint accepts with a warning when Telegram is not configured',
   assert.equal(res.status, 202);
   const body = await res.json();
   assert.equal(body.accepted, true);
-  assert.equal(body.queued, undefined);
+  assert.equal(body.queued, true);
   assert.match(logs, /feedback_delivery_disabled/);
+
+  // No bot configured, yet the feedback must be stored, not lost (it will be
+  // delivered once the bot is configured and the app restarts).
+  for (let i = 0; i < 10; i++) {
+    try {
+      const raw = await readFile(spillPath, 'utf8');
+      const entries = JSON.parse(raw);
+      if (entries.length > 0) {
+        assert.equal(entries[0].message, 'still accepted');
+        return;
+      }
+    } catch {
+      // File may not exist yet; the spill module writes after validation.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail('Expected a spilled entry to appear on disk even without Telegram configured');
 });
 
 test('feedback endpoint stores undeliverable feedback and retries it against the configured endpoint', async (t) => {

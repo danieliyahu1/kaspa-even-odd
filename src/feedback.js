@@ -10,8 +10,9 @@
 //
 // Telegram is deliberately invisible to the user: from their point of view the
 // app accepts "a bug, an idea, or something that felt confusing" and thanks
-// them. If Telegram is not configured the app still thanks the user and logs a
-// warning, because a missing bot must not break the rest of the app.
+// them. If Telegram is not configured the feedback is still stored in the spill
+// queue and delivered once the bot is configured, and a `feedback_delivery_disabled`
+// warning is logged so the missing bot is noticed without breaking the app.
 import { randomUUID } from 'node:crypto';
 import { readFile, rename, writeFile } from 'node:fs/promises';
 import { ProtocolError } from './protocol.js';
@@ -129,17 +130,19 @@ export class FeedbackService {
     this.logger = logger;
   }
 
-  // Write-ahead: the feedback is durable before delivery is attempted, so a
-  // Telegram outage (or a crash mid-flight) never loses it.
+  // Write-ahead: the feedback is durable before anything can fail, so a
+  // Telegram outage, a missing bot, or a crash mid-flight never loses it. An
+  // entry accepted while the bot is not configured stays queued and is
+  // delivered by the next drain once the bot is configured.
   async submit(input) {
     const feedback = validateFeedback(input);
+    const entry = await this.spill.add(feedback);
     if (!this.deliverer.enabled) {
       const reason = 'TELEGRAM_FEEDBACK_BOT_TOKEN or TELEGRAM_FEEDBACK_CHAT_ID is not set';
       this.metrics?.recordFeedback({ outcome: 'disabled' });
       this.logger.warn?.('feedback_delivery_disabled', { reason });
-      return { accepted: true };
+      return { accepted: true, queued: true };
     }
-    const entry = await this.spill.add(feedback);
     try {
       await this.deliverer.deliver(entry);
       await this.spill.remove(entry);
