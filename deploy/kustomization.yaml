@@ -6,6 +6,7 @@ resources:
   - service.yaml
   - metrics-service.yaml
   - deployment.yaml
+  - externalsecret.yaml
   - network-policy.yaml
   - vmservicescrape.yaml
   - grafana-dashboard.yaml
