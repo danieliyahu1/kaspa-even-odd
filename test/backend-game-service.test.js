@@ -54,6 +54,19 @@ test('only the match creator may start the game, with the assigned side', async 
   await assert.rejects(service.prepareCreation(base), { code: 'NO_UTXOS' });
 });
 
+test('preparing a game without a configured fee recipient fails cleanly', async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const service = new BackendGameService({ rpc: NO_UTXO_RPC, store: new BackendGameStore(join(directory, 'games.json')) });
+  await assert.rejects(service.prepareCreation({
+    creatorAddress: 'kaspatest:creator',
+    creatorPublicKey: 'a'.repeat(64),
+    creatorCommitment: 'e'.repeat(64),
+    side: 'even',
+    stakeKas: 1,
+  }), { code: 'INVALID_GAME_FEE' });
+});
+
 test('submitting an unknown creation preparation is rejected', async (t) => {
   const directory = await mkdtemp(join(tmpdir(), 'even-odd-service-'));
   t.after(() => rm(directory, { recursive: true, force: true }));

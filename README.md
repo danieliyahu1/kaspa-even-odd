@@ -173,14 +173,15 @@ Runtime details:
   address of the game wallet that receives 1% of the total locked pot when a
   game settles with a winner (second reveal or fallback claim). Kaspa
   version-0 (PubKey) addresses embed the recipient's x-only public key
-  directly, so the server decodes the address at startup and bakes that key
+directly, so the server decodes the address at startup and bakes that key
   into every game's covenant state. Each player locks exactly the displayed
   stake; refunds and no-reveal flows return that full lock, while winner
-  settlement pays the fee from the total pot. The process fails closed: it refuses to start when neither
-  `GAME_FEE_ADDRESS` nor the raw-key fallback `GAME_FEE_PUBLIC_KEY` is
-  provided, so a misconfigured pod never serves games without a fee
-  recipient. Create the cluster Secret out-of-band (its value never lives in
-  Git):
+  settlement pays the fee from the total pot. The fee recipient is runtime-only
+  configuration: the process boots without it, reports
+  `gameFeePublicKey: null` from `/api/config`, and rejects game creation with
+  `INVALID_GAME_FEE` until it is configured — so a misconfigured pod never
+  serves a game without a fee recipient. Create the cluster Secret out-of-band
+  (its value never lives in Git):
   `kubectl create secret generic kaspa-even-odd-fee --from-literal=address=kaspatest:...`
   The Deployment references it with `valueFrom.secretKeyRef`, so the pod also
   fails to be created when the Secret is missing.

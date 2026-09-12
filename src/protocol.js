@@ -85,10 +85,10 @@ export function validateGameFeeAddress(value, name = 'game fee address') {
   return Buffer.from(decoded.payload).toString('hex');
 }
 
-export function resolveGameFeePublicKey(env, name = 'game fee configuration') {
+export function resolveGameFeePublicKey(env) {
   if (env.GAME_FEE_ADDRESS) return validateGameFeeAddress(env.GAME_FEE_ADDRESS);
   if (env.GAME_FEE_PUBLIC_KEY) return validateGameFeePublicKey(env.GAME_FEE_PUBLIC_KEY);
-  throw new ProtocolError('INVALID_GAME_FEE', `${name} requires GAME_FEE_ADDRESS (or GAME_FEE_PUBLIC_KEY)`);
+  return null;
 }
 
 export function validateSide(side) {

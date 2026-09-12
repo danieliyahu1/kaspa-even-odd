@@ -42,10 +42,10 @@ test('decodes the payer fee public key from a version-0 wallet address', () => {
   assert.equal(validateGameFeeAddress(feeAddress), feePublicKey);
 });
 
-test('rejects invalid fee addresses and missing fee configuration', () => {
+test('rejects invalid fee addresses and treats missing fee configuration as unconfigured', () => {
   assert.throws(() => validateGameFeeAddress('kaspatest:not-an-address'), { code: 'INVALID_GAME_FEE' });
   assert.throws(() => validateGameFeeAddress(bech32Encode('kaspa', 0, Buffer.from(feePublicKey, 'hex'))), { code: 'INVALID_GAME_FEE' });
-  assert.throws(() => resolveGameFeePublicKey({}), { code: 'INVALID_GAME_FEE' });
+  assert.equal(resolveGameFeePublicKey({}), null);
 });
 
 test('prefers the configured fee address over the raw public key', () => {

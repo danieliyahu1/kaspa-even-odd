@@ -32,7 +32,7 @@ export class BackendGameService {
     this.store = store;
     this.metrics = metrics;
     this.ephemeral = ephemeral;
-    this.gameFeePublicKey = validateGameFeePublicKey(gameFeePublicKey);
+    this.gameFeePublicKey = gameFeePublicKey ? validateGameFeePublicKey(gameFeePublicKey) : null;
   }
 
   // Static config only: deliberately does not touch the node, so booting the
@@ -79,6 +79,7 @@ export class BackendGameService {
   // --- Game lifecycle ------------------------------------------------------
 
   async prepareCreation(input) {
+    if (!this.gameFeePublicKey) throw new ProtocolError('INVALID_GAME_FEE', 'Game fee recipient is not configured yet (GAME_FEE_ADDRESS)');
     if (input.matchId) await this.#validateMatchCreation(input);
     const dag = await this.rpc.getBlockDagInfo();
     const request = prepareCreateGame({
